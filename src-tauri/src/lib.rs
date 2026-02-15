@@ -1,4 +1,5 @@
 mod audio;
+mod config;
 mod input;
 mod state;
 mod transcription;
@@ -6,7 +7,7 @@ mod transcription;
 use state::{DictationState, SharedState, StatePayload};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::ShortcutState;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use transcription::whisper::{TranscriptionRequest, TranscriptionResponse};
 
 /// Makes the overlay window non-activating so it doesn't steal focus from the current app.
@@ -347,6 +348,56 @@ fn setup_model(app_handle: tauri::AppHandle) {
     }
 }
 
+/// Stores the currently active hotkey string.
+pub struct CurrentHotkey(pub std::sync::Mutex<String>);
+
+#[tauri::command]
+fn get_hotkey(current_hotkey: tauri::State<'_, CurrentHotkey>) -> String {
+    current_hotkey.0.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_hotkey(
+    app: tauri::AppHandle,
+    current_hotkey: tauri::State<'_, CurrentHotkey>,
+    new_hotkey: String,
+) -> Result<(), String> {
+    let old_hotkey = current_hotkey.0.lock().unwrap().clone();
+
+    // Unregister the old shortcut
+    let gs = app.global_shortcut();
+    if gs.is_registered(old_hotkey.as_str()) {
+        gs.unregister(old_hotkey.as_str()).map_err(|e| format!("Failed to unregister old hotkey: {}", e))?;
+    }
+
+    // Register the new shortcut with our handler
+    gs.on_shortcut(new_hotkey.as_str(), |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_recording(app);
+        }
+    })
+    .map_err(|e| {
+        // Re-register the old shortcut on failure
+        let _ = gs.on_shortcut(old_hotkey.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_recording(app);
+            }
+        });
+        format!("Failed to register new hotkey '{}': {}", new_hotkey, e)
+    })?;
+
+    // Save to config
+    let cfg = config::AppConfig {
+        hotkey: new_hotkey.clone(),
+    };
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Update in-memory state
+    *current_hotkey.0.lock().unwrap() = new_hotkey;
+
+    Ok(())
+}
+
 /// Sends LoadModel request to transcription thread and waits for response.
 fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
     let tx = app_handle.state::<TranscriptionSender>();
@@ -394,6 +445,10 @@ fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load config for saved hotkey
+    let app_config = config::load_config();
+    let hotkey = app_config.hotkey.clone();
+
     // Create shared state
     let shared_state: SharedState = Arc::new(parking_lot::Mutex::new(state::AppState::default()));
 
@@ -405,11 +460,13 @@ pub fn run() {
         .manage(TranscriptionSender(std::sync::Mutex::new(req_tx)))
         .manage(TranscriptionReceiver(std::sync::Mutex::new(resp_rx)))
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
-        .setup(|app| {
-            // Register global shortcut plugin with Alt+Space
+        .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey])
+        .setup(move |app| {
+            // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
-                    .with_shortcuts(["alt+space"])?
+                    .with_shortcuts([hotkey.as_str()])?
                     .with_handler(|app, _shortcut, event| {
                         if event.state == ShortcutState::Pressed {
                             toggle_recording(app);
