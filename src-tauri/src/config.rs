@@ -16,6 +16,10 @@ pub struct AppConfig {
     pub selected_model: String,
     #[serde(default = "default_true")]
     pub smart_paste: bool,
+    #[serde(default)]
+    pub overlay_x: Option<f64>,
+    #[serde(default)]
+    pub overlay_y: Option<f64>,
 }
 
 fn default_true() -> bool {
@@ -28,6 +32,8 @@ impl Default for AppConfig {
             hotkey: DEFAULT_HOTKEY.to_string(),
             selected_model: default_model(),
             smart_paste: true,
+            overlay_x: None,
+            overlay_y: None,
         }
     }
 }

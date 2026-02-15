@@ -1,4 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
+import { invoke } from "@tauri-apps/api/core";
 import type { DictationState } from "../types";
 import { PulseAnimation } from "./PulseAnimation";
 import { Settings } from "./Settings";
@@ -11,6 +14,10 @@ export function Overlay({ state }: OverlayProps) {
   const [showSettings, setShowSettings] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
 
+  const isDragging = useRef(false);
+  const dragStartMouse = useRef({ x: 0, y: 0 });
+  const dragStartPos = useRef({ x: 0, y: 0 });
+
   const partialText = state.type === "Recording" ? state.partial_text : undefined;
 
   useEffect(() => {
@@ -19,12 +26,66 @@ export function Overlay({ state }: OverlayProps) {
     }
   }, [partialText]);
 
+  const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+
+    const appWindow = getCurrentWindow();
+    const pos = await appWindow.outerPosition();
+    const scaleFactor = await appWindow.scaleFactor();
+
+    dragStartPos.current = {
+      x: pos.x / scaleFactor,
+      y: pos.y / scaleFactor,
+    };
+    dragStartMouse.current = { x: e.screenX, y: e.screenY };
+    isDragging.current = true;
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+
+      const deltaX = e.screenX - dragStartMouse.current.x;
+      const deltaY = e.screenY - dragStartMouse.current.y;
+
+      const newX = dragStartPos.current.x + deltaX;
+      const newY = dragStartPos.current.y + deltaY;
+
+      getCurrentWindow().setPosition(new LogicalPosition(newX, newY));
+    };
+
+    const handleMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+
+      const appWindow = getCurrentWindow();
+      appWindow.outerPosition().then(async (pos) => {
+        const scaleFactor = await appWindow.scaleFactor();
+        invoke("save_overlay_position", {
+          x: pos.x / scaleFactor,
+          y: pos.y / scaleFactor,
+        });
+      });
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
   if (state.type === "Idle" && !showSettings) {
     return null;
   }
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div
+      className="flex flex-col items-center gap-2 cursor-grab active:cursor-grabbing"
+      onMouseDown={handleMouseDown}
+    >
       {state.type !== "Idle" && (
         <div className="flex flex-col gap-2 px-5 py-3 bg-black/80 backdrop-blur-xl rounded-2xl border border-white/10 max-w-[300px]">
           <div className="flex items-center gap-3">
@@ -61,6 +122,7 @@ export function Overlay({ state }: OverlayProps) {
             )}
 
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={() => setShowSettings(!showSettings)}
               className="ml-auto text-white/30 hover:text-white/70 transition-colors flex-shrink-0"
               title="Settings"
@@ -83,7 +145,9 @@ export function Overlay({ state }: OverlayProps) {
         </div>
       )}
 
-      <Settings visible={showSettings} onClose={() => setShowSettings(false)} />
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        <Settings visible={showSettings} onClose={() => setShowSettings(false)} />
+      </div>
     </div>
   );
 }
