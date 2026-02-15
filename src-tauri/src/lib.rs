@@ -634,6 +634,54 @@ fn set_smart_paste(
     Ok(())
 }
 
+#[tauri::command]
+fn cancel_recording(app: tauri::AppHandle) {
+    let shared_state = app.state::<SharedState>();
+    let current_state = {
+        let state = shared_state.lock();
+        state.dictation_state.clone()
+    };
+
+    match current_state {
+        DictationState::Recording { .. } => {
+            // Stop the streaming loop
+            let streaming_flag = app.state::<StreamingActive>();
+            streaming_flag.0.store(false, Ordering::SeqCst);
+
+            // Stop recording and discard audio
+            {
+                let active_capture = app.state::<ActiveCapture>();
+                let mut ac = active_capture.0.lock().unwrap();
+                if let Some(mut capture) = ac.take() {
+                    let _ = capture.stop_recording();
+                }
+            }
+
+            // Reset to Idle
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = DictationState::Idle;
+            }
+            emit_state(&app, &DictationState::Idle);
+            if let Some(window) = app.get_webview_window("overlay") {
+                let _ = window.hide();
+            }
+        }
+        DictationState::Error { .. } => {
+            // Dismiss error
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = DictationState::Idle;
+            }
+            emit_state(&app, &DictationState::Idle);
+            if let Some(window) = app.get_webview_window("overlay") {
+                let _ = window.hide();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Sends LoadModel request to transcription thread and waits for response.
 fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
     let tx = app_handle.state::<TranscriptionSender>();
@@ -706,7 +754,7 @@ pub fn run() {
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, save_overlay_position])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, save_overlay_position, cancel_recording])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
