@@ -125,6 +125,32 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                         let flag = Arc::clone(&streaming_flag.0);
                         let app_stream = app_handle.clone();
 
+                        // Spawn audio level emitter (~30fps)
+                        let flag_levels = Arc::clone(&streaming_flag.0);
+                        let app_levels = app_handle.clone();
+                        std::thread::spawn(move || {
+                            while flag_levels.load(Ordering::SeqCst) {
+                                let levels = {
+                                    let active_capture = app_levels.state::<ActiveCapture>();
+                                    let ac = active_capture.0.lock().unwrap();
+                                    match ac.as_ref() {
+                                        Some(capture) => {
+                                            let buf = capture.buffer().lock().unwrap();
+                                            audio::levels::compute_levels(
+                                                &buf,
+                                                capture.sample_rate(),
+                                                48,
+                                            )
+                                        }
+                                        None => break,
+                                    }
+                                };
+
+                                let _ = app_levels.emit("audio-levels", &levels);
+                                std::thread::sleep(std::time::Duration::from_millis(33));
+                            }
+                        });
+
                         std::thread::spawn(move || {
                             // Wait for initial audio to accumulate
                             std::thread::sleep(std::time::Duration::from_millis(500));

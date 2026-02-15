@@ -3,7 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
 import type { DictationState } from "../types";
-import { PulseAnimation } from "./PulseAnimation";
+import { useAudioLevels } from "../hooks/useAudioLevels";
+import { AudioWaveform } from "./AudioWaveform";
 import { Settings } from "./Settings";
 
 interface OverlayProps {
@@ -13,6 +14,7 @@ interface OverlayProps {
 export function Overlay({ state }: OverlayProps) {
   const [showSettings, setShowSettings] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
+  const audioLevels = useAudioLevels(state.type === "Recording");
 
   const isDragging = useRef(false);
   const dragStartMouse = useRef({ x: 0, y: 0 });
@@ -91,8 +93,8 @@ export function Overlay({ state }: OverlayProps) {
           <div className="flex items-center gap-3">
             {state.type === "Recording" && (
               <>
-                <PulseAnimation />
-                <span className="text-red-400 text-sm font-medium">
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="text-white/70 text-sm font-medium">
                   {state.partial_text ? "Transcribing..." : "Listening..."}
                 </span>
               </>
@@ -133,6 +135,10 @@ export function Overlay({ state }: OverlayProps) {
               </svg>
             </button>
           </div>
+
+          {state.type === "Recording" && (
+            <AudioWaveform levels={audioLevels} />
+          )}
 
           {state.type === "Recording" && state.partial_text && (
             <div
