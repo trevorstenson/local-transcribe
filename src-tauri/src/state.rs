@@ -1,3 +1,4 @@
+use crate::vocabulary::CorrectionApplied;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -14,6 +15,12 @@ pub enum DictationState {
     Processing,
     Downloading { progress: f32 },
     Error { message: String },
+    CorrectionPreview {
+        text: String,
+        original_text: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        corrections: Vec<CorrectionApplied>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +35,8 @@ pub struct AppState {
     pub smart_paste: bool,
     pub language: String,
     pub vocab_enabled: bool,
+    pub pending_original_text: Option<String>,
+    pub pending_corrected_text: Option<String>,
 }
 
 impl Default for AppState {
@@ -39,6 +48,8 @@ impl Default for AppState {
             smart_paste: true,
             language: String::from("en"),
             vocab_enabled: true,
+            pending_original_text: None,
+            pending_corrected_text: None,
         }
     }
 }

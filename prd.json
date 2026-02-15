@@ -73,7 +73,7 @@
         "Typecheck passes (cargo check in src-tauri)"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -90,7 +90,7 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -111,7 +111,7 @@
         "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -130,7 +130,7 @@
         "Typecheck passes (cargo check in src-tauri)"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
