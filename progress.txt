@@ -1,7 +1,7 @@
 ## Codebase Patterns
 - Tauri v2 uses separate `src-tauri/Info.plist` for custom Info.plist keys (like NSMicrophoneUsageDescription) - it merges with generated values. Don't use `infoPlist` map in tauri.conf.json.
 - Tauri v2 entitlements go in `bundle.macOS.entitlements` as a path string (e.g., `"./entitlements.plist"`)
-- `cmake` is required for building whisper-rs (compiles whisper.cpp from source)
+- `cmake` is required for building whisper-rs (compiles whisper.cpp from source). On macOS, whisper.cpp needs `std::filesystem` so set `MACOSX_DEPLOYMENT_TARGET=10.15` (e.g. `export MACOSX_DEPLOYMENT_TARGET=10.15` before `cargo build`, or use `npm run tauri build` which sets it).
 - Rust lib name is `dictate_lib` (in Cargo.toml [lib] section), referenced in main.rs as `dictate_lib::run()`
 - TypeScript check: `npx tsc --noEmit`, Rust check: `cargo check` in `src-tauri/`
 - cpal 0.17: `SampleRate` is `pub type SampleRate = u32` (not a tuple struct). Use `config.sample_rate()` directly, NOT `.0`

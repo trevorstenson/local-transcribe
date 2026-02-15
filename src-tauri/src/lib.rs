@@ -199,33 +199,38 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 let _ = window.hide();
                             }
                         } else {
-                            // Paste the transcribed text
-                            if let Err(e) = input::paste::paste_text(&trimmed) {
-                                log::error!("Failed to paste text: {}", e);
-                                let error_state = DictationState::Error {
-                                    message: format!("Failed to paste: {}", e),
-                                };
-                                let shared_state = app_handle_clone.state::<SharedState>();
+                            // Paste the transcribed text on the main thread
+                            // (macOS requires AppKit/HID calls on the main thread)
+                            let app_for_paste = app_handle_clone.clone();
+                            let text_to_paste = trimmed.clone();
+                            let _ = app_handle_clone.run_on_main_thread(move || {
+                                if let Err(e) = input::paste::paste_text(&text_to_paste) {
+                                    log::error!("Failed to paste text: {}", e);
+                                    let error_state = DictationState::Error {
+                                        message: format!("Failed to paste: {}", e),
+                                    };
+                                    let shared_state = app_for_paste.state::<SharedState>();
+                                    {
+                                        let mut state = shared_state.lock();
+                                        state.dictation_state = error_state.clone();
+                                    }
+                                    emit_state(&app_for_paste, &error_state);
+                                    return;
+                                }
+
+                                // Success — back to Idle
+                                let shared_state = app_for_paste.state::<SharedState>();
                                 {
                                     let mut state = shared_state.lock();
-                                    state.dictation_state = error_state.clone();
+                                    state.dictation_state = DictationState::Idle;
                                 }
-                                emit_state(&app_handle_clone, &error_state);
-                                return;
-                            }
-
-                            // Success — back to Idle
-                            let shared_state = app_handle_clone.state::<SharedState>();
-                            {
-                                let mut state = shared_state.lock();
-                                state.dictation_state = DictationState::Idle;
-                            }
-                            emit_state(&app_handle_clone, &DictationState::Idle);
-                            if let Some(window) =
-                                app_handle_clone.get_webview_window("overlay")
-                            {
-                                let _ = window.hide();
-                            }
+                                emit_state(&app_for_paste, &DictationState::Idle);
+                                if let Some(window) =
+                                    app_for_paste.get_webview_window("overlay")
+                                {
+                                    let _ = window.hide();
+                                }
+                            });
                         }
                     }
                     Ok(TranscriptionResponse::TranscriptionComplete(Err(e))) => {

@@ -1,31 +1,42 @@
 use std::sync::mpsc;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+};
 
 struct TranscriptionService {
     context: Option<WhisperContext>,
+    state: Option<WhisperState>,
 }
 
 impl TranscriptionService {
     fn new() -> Self {
-        Self { context: None }
+        Self {
+            context: None,
+            state: None,
+        }
     }
 
     fn load_model(&mut self, path: &str) -> Result<(), String> {
+        // Drop existing state before replacing context
+        self.state = None;
+
         let ctx = WhisperContext::new_with_params(path, WhisperContextParameters::default())
             .map_err(|e| format!("Failed to load Whisper model: {:?}", e))?;
+
+        let state = ctx
+            .create_state()
+            .map_err(|e| format!("Failed to create whisper state: {:?}", e))?;
+
         self.context = Some(ctx);
+        self.state = Some(state);
         Ok(())
     }
 
-    fn transcribe(&self, audio_data: &[f32]) -> Result<String, String> {
-        let ctx = self
-            .context
-            .as_ref()
+    fn transcribe(&mut self, audio_data: &[f32]) -> Result<String, String> {
+        let state = self
+            .state
+            .as_mut()
             .ok_or_else(|| "Model not loaded".to_string())?;
-
-        let mut state = ctx
-            .create_state()
-            .map_err(|e| format!("Failed to create whisper state: {:?}", e))?;
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_n_threads(4);
