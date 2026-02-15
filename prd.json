@@ -164,8 +164,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DictationState discriminated union uses 'type' field matching Rust serde(tag=\"type\"). Overlay returns null for Idle state (window is hidden by backend anyway). useDictationState hook listens to 'dictation-state' Tauri event via @tauri-apps/api/event listen()."
     },
     {
       "id": "US-010",

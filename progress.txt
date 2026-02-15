@@ -20,6 +20,7 @@
 - Tauri v2 events: `app_handle.emit("event-name", payload)` requires `use tauri::Emitter;` trait. Payload must be `Serialize + Clone`.
 - Tauri v2 windows: `app.get_webview_window("label")` returns `Option<WebviewWindow>` with `.show()` / `.hide()` methods.
 - Tauri `setup()` runs on main thread — spawn background threads for long operations (model download/load). Use `app.handle().clone()` to get owned AppHandle for threads.
+- Frontend Tauri event listener: `listen<PayloadType>("event-name", (event) => { event.payload... })` from `@tauri-apps/api/event`. Returns `Promise<UnlistenFn>` — call in useEffect cleanup via `.then(fn => fn())`.
 - To call async functions from std::thread: `tokio::runtime::Runtime::new().unwrap().block_on(async { ... })`
 - Transcription result handling: spawn std::thread to block on `mpsc::recv()`, then update state/paste/hide overlay from that thread.
 ---
@@ -141,4 +142,19 @@
   - `app.handle().clone()` produces an owned `AppHandle` that can be moved into spawned threads (it's `Send + Sync`)
   - When waiting for transcription results, spawn a std::thread that blocks on `mpsc::recv()` — don't block the shortcut handler thread
   - Empty/silent audio produces empty string from Whisper — check `.trim().is_empty()` before pasting to avoid inserting blank text
+---
+
+## 2026-02-14 - US-009
+- Built overlay React components for all dictation states
+- `src/types.ts`: DictationState discriminated union type matching Rust serde(tag="type") enum — Idle, Recording (duration_ms), Processing, Downloading (progress), Error (message)
+- `src/hooks/useDictationState.ts`: Custom hook that listens to `dictation-state` Tauri events via `@tauri-apps/api/event` `listen()`, defaults to Idle state
+- `src/components/PulseAnimation.tsx`: Red dot with animate-ping overlay for recording indicator
+- `src/components/Overlay.tsx`: Dark frosted-glass pill (bg-black/80 backdrop-blur-xl rounded-2xl border-white/10) displaying state-specific UI: Recording (red pulse + "Listening..."), Processing (blue spinner + "Transcribing..."), Downloading (green spinner + "Downloading model... XX%"), Error (yellow dot + message). Returns null for Idle.
+- `src/App.tsx`: Updated to render Overlay component using useDictationState hook
+- Files changed: 5 (4 new files + App.tsx modified)
+- **Learnings for future iterations:**
+  - Tauri events payload structure: `event.payload.state` — the `StatePayload` wrapper contains the `DictationState` object
+  - `@tauri-apps/api/event` `listen()` returns a Promise<UnlistenFn> — cleanup in useEffect needs `.then(fn => fn())`
+  - TypeScript strict mode with `noUnusedLocals` and `noUnusedParameters` — all imports and params must be used
+  - Overlay returns null for Idle since the window is hidden by the Rust backend anyway — no need to render anything
 ---
