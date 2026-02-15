@@ -180,8 +180,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cocoa 0.26 APIs are deprecated (recommends objc2-app-kit) but work correctly. NSFloatingWindowLevel = 3 as raw integer. Tauri WebviewWindow::ns_window() returns *mut c_void that casts to cocoa id type."
     },
     {
       "id": "US-011",

@@ -23,6 +23,9 @@
 - Frontend Tauri event listener: `listen<PayloadType>("event-name", (event) => { event.payload... })` from `@tauri-apps/api/event`. Returns `Promise<UnlistenFn>` — call in useEffect cleanup via `.then(fn => fn())`.
 - To call async functions from std::thread: `tokio::runtime::Runtime::new().unwrap().block_on(async { ... })`
 - Transcription result handling: spawn std::thread to block on `mpsc::recv()`, then update state/paste/hide overlay from that thread.
+- Tauri v2 `WebviewWindow::ns_window()` returns `*mut c_void` — cast to `cocoa::base::id` for NSWindow trait methods
+- cocoa 0.26: `NSWindowCollectionBehavior` bitflags for CanJoinAllSpaces | Stationary | IgnoresCycle, `setLevel_(3)` for NSFloatingWindowLevel
+- `#[cfg(target_os = "macos")]` gate platform-specific functions, use `#[cfg(target_os = "macos")]` on call sites too
 ---
 
 ## 2026-02-14 - US-001
@@ -157,4 +160,18 @@
   - `@tauri-apps/api/event` `listen()` returns a Promise<UnlistenFn> — cleanup in useEffect needs `.then(fn => fn())`
   - TypeScript strict mode with `noUnusedLocals` and `noUnusedParameters` — all imports and params must be used
   - Overlay returns null for Idle since the window is hidden by the Rust backend anyway — no need to render anything
+---
+
+## 2026-02-14 - US-010
+- Made overlay window non-activating on macOS so it doesn't steal keyboard focus from the active app
+- Added `make_window_non_activating()` function to lib.rs using cocoa crate (cfg-gated for macOS)
+- Sets NSWindowCollectionBehavior: CanJoinAllSpaces | Stationary | IgnoresCycle
+- Sets window level to NSFloatingWindowLevel (3)
+- Called in setup closure after global shortcut registration, before model download thread spawn
+- Files changed: 1 (lib.rs modified — added ~20 lines)
+- **Learnings for future iterations:**
+  - Tauri v2 `WebviewWindow::ns_window()` returns `*mut c_void` — cast to `cocoa::base::id` to use NSWindow trait methods from cocoa crate
+  - NSFloatingWindowLevel is not exported as a named constant in cocoa 0.26 — use raw value `3`
+  - cocoa 0.26 APIs show deprecation warnings recommending objc2-app-kit, but function correctly
+  - `#[cfg(target_os = "macos")]` needed both on the function definition AND the call site to avoid compile errors on other platforms
 ---
