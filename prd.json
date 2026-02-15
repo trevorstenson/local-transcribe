@@ -1,0 +1,239 @@
+{
+  "project": "Dictate",
+  "branchName": "ralph/dictate-local-whisper",
+  "description": "Dictate — Free local voice-to-text dictation app for macOS using Tauri v2 + Rust + React with whisper.cpp (Metal GPU acceleration)",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Scaffold Tauri v2 project with React TypeScript",
+      "description": "As a developer, I need the project scaffolded with Tauri v2 + React + TypeScript so that all subsequent features have a working foundation.",
+      "acceptanceCriteria": [
+        "Run `npm create tauri-app@latest . -- --template react-ts` to generate project (or manually create equivalent structure if command fails)",
+        "src-tauri/tauri.conf.json configured: productName 'Dictate', identifier 'com.dictate.app', macOSPrivateApi true, single window with label 'overlay' (280x120, y:80, resizable:false, decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, visible:false, focus:false, shadow:false)",
+        "src-tauri/entitlements.plist created: com.apple.security.app-sandbox=false, com.apple.security.device.audio-input=true",
+        "src-tauri/capabilities/default.json created with permissions: core:default, core:window:allow-show, core:window:allow-hide, core:window:allow-set-focus, core:window:allow-set-position, global-shortcut:allow-register, global-shortcut:allow-unregister, global-shortcut:allow-is-registered",
+        "src/styles/globals.css has transparent body: html/body/#root with background:transparent, overflow:hidden, user-select:none",
+        "Cargo.toml includes all dependencies: tauri 2.10 with macos-private-api feature, tauri-plugin-global-shortcut 2.3, whisper-rs 0.15 with metal feature, cpal 0.17, arboard 3.6, enigo 0.6, tokio 1 with macros+rt-multi-thread+sync+time, serde 1 with derive, serde_json 1, anyhow 1, log 0.4, env_logger 0.11, reqwest 0.12 with stream+rustls-tls, futures-util 0.3, dirs 6, parking_lot 0.12, cocoa 0.26 and objc 0.2 as macos-only deps, tauri-build 2.0 as build dep",
+        "package.json includes: @tauri-apps/api ^2.2.0, @tauri-apps/plugin-global-shortcut ^2.2.0, react ^19.0.0, react-dom ^19.0.0, @tauri-apps/cli ^2.2.0, @vitejs/plugin-react ^4.3.0, tailwindcss ^3.4.0, typescript ^5.6.0, vite ^6.0.0, postcss, autoprefixer",
+        "tailwind.config.js and postcss.config.js configured for React+Tailwind",
+        "src-tauri/src/main.rs exists with entry point calling lib::run()",
+        "src-tauri/src/lib.rs exists with minimal Tauri setup (empty run function that builds and runs the app)",
+        "index.html references the React entry point",
+        "Bundle config in tauri.conf.json includes macOS entitlements path and NSMicrophoneUsageDescription in infoPlist",
+        "Typecheck passes (both `cargo check` in src-tauri and `npx tsc --noEmit`)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Create audio capture module with resampler",
+      "description": "As a developer, I need an AudioCapture struct that records from the default microphone and resamples to 16kHz mono f32 for Whisper input.",
+      "acceptanceCriteria": [
+        "Create src-tauri/src/audio/mod.rs that re-exports capture and resampler modules",
+        "Create src-tauri/src/audio/resampler.rs with `pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32>` using linear interpolation. Returns input unchanged if rates match or input is empty",
+        "Create src-tauri/src/audio/capture.rs with `AudioCapture` struct containing: stream (Option<Stream>), buffer (Arc<Mutex<Vec<f32>>>), device_sample_rate (u32)",
+        "AudioCapture::new() gets default input device and config from cpal, stores device_sample_rate",
+        "AudioCapture::start_recording() builds cpal input stream for F32 or I16 sample formats, converts multi-channel to mono by averaging, appends to buffer. Clears buffer before starting",
+        "AudioCapture::stop_recording() drops the stream, takes the buffer, and returns resampled audio via resampler::resample(buffer, device_sample_rate, 16000)",
+        "Add `mod audio;` to lib.rs",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Create Whisper model manager with HuggingFace download",
+      "description": "As a developer, I need a model manager that catalogs available Whisper models, checks if they're cached, and downloads them from HuggingFace.",
+      "acceptanceCriteria": [
+        "Create src-tauri/src/transcription/mod.rs that re-exports model_manager and whisper modules",
+        "Create src-tauri/src/transcription/model_manager.rs with ModelInfo struct (name, filename, size_mb, description) and AVAILABLE_MODELS const array with 5 models: tiny.en (78MB), base.en (148MB), small.en (488MB), medium.en (1530MB), base.en-q8_0 (82MB)",
+        "HF_BASE_URL const set to 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main'",
+        "models_dir() returns ~/Library/Application Support/com.dictate.app/models/ (using dirs::data_dir())",
+        "model_exists(model_name) checks if the model file exists on disk",
+        "model_path(model_name) returns Option<PathBuf> for the model file path",
+        "async fn download_model(model_name, progress_callback) streams download from HuggingFace using reqwest bytes_stream, calls progress_callback(downloaded, total) on each chunk, writes to file, returns path",
+        "download_model creates the models directory if it doesn't exist",
+        "Add `mod transcription;` to lib.rs",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Create transcription engine with dedicated thread",
+      "description": "As a developer, I need a Whisper transcription service on a dedicated thread with channel-based API, since WhisperState is not Send/Sync.",
+      "acceptanceCriteria": [
+        "Create src-tauri/src/transcription/whisper.rs with internal TranscriptionService struct that owns Option<WhisperContext>",
+        "TranscriptionService::load_model(path) creates WhisperContext with default params",
+        "TranscriptionService::transcribe(audio_data) creates WhisperState, configures FullParams with Greedy sampling (best_of:1), 4 threads, English language, no_context:true, single_segment:false, suppress_blank:true, suppress_nst:true, no timestamps, no progress printing. Runs full() and collects segment text",
+        "Define TranscriptionRequest enum: LoadModel(String), Transcribe(Vec<f32>), Shutdown",
+        "Define TranscriptionResponse enum: ModelLoaded(Result<(), String>), TranscriptionComplete(Result<String, String>)",
+        "pub fn spawn_transcription_thread() returns (mpsc::Sender<TranscriptionRequest>, mpsc::Receiver<TranscriptionResponse>). Spawns std::thread that loops on req_rx.recv(), handles LoadModel/Transcribe/Shutdown",
+        "Update transcription/mod.rs to re-export whisper module",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Create text paste module with accessibility check",
+      "description": "As a developer, I need a paste module that writes text to clipboard and simulates Cmd+V, plus checks for macOS Accessibility permission.",
+      "acceptanceCriteria": [
+        "Create src-tauri/src/input/mod.rs that re-exports paste module",
+        "Create src-tauri/src/input/paste.rs with pub fn paste_text(text: &str) -> anyhow::Result<()>",
+        "paste_text writes text to clipboard via arboard::Clipboard, sleeps 50ms, then simulates Cmd+V via enigo: Meta press, Unicode('v') click, Meta release",
+        "pub fn check_accessibility_permission() -> bool that calls AXIsProcessTrusted() via extern C on macOS, returns true on other platforms",
+        "Add `mod input;` to lib.rs",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Create state types and shared state",
+      "description": "As a developer, I need the DictationState enum and SharedState type that all modules will reference.",
+      "acceptanceCriteria": [
+        "Create src-tauri/src/state.rs with DictationState enum (serde tagged): Idle, Recording { duration_ms: u64 }, Processing, Downloading { progress: f32 }, Error { message: String }",
+        "Create StatePayload struct with state: DictationState field (Serialize, Deserialize)",
+        "Create AppState struct with dictation_state: DictationState, model_path: Option<String>, selected_model: String (default 'base.en')",
+        "Define SharedState type alias as Arc<Mutex<AppState>> using parking_lot::Mutex",
+        "Add `mod state;` to lib.rs",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Wire up Tauri app with global shortcut and state events",
+      "description": "As a developer, I need lib.rs to register the global shortcut and emit state change events to the frontend, with basic Idle/Recording toggling.",
+      "acceptanceCriteria": [
+        "lib.rs run() function creates SharedState, spawns transcription thread, stores both as Tauri managed state",
+        "Register tauri-plugin-global-shortcut plugin",
+        "Register Alt+Space (Option+Space) global shortcut in setup closure",
+        "Shortcut handler calls toggle_recording function",
+        "toggle_recording matches on current DictationState: Idle starts AudioCapture and sets Recording, Recording stops capture. Processing/Downloading states are ignored. Error resets to Idle",
+        "Helper function emit_state(app_handle, state) emits 'dictation-state' event with StatePayload to frontend",
+        "When entering Recording: show overlay window (without focus). When returning to Idle: hide overlay window",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Add model download on startup and transcription flow",
+      "description": "As a developer, I need the app to download the Whisper model on first run and complete the full recording→transcription→paste pipeline.",
+      "acceptanceCriteria": [
+        "In lib.rs setup: check if base.en model exists via model_manager::model_exists(). If not, emit Downloading state and call download_model with progress callback that emits Downloading { progress } events. Then send LoadModel request to transcription thread and wait for ModelLoaded response",
+        "If model already exists, send LoadModel request directly on startup",
+        "Store model_path in SharedState after successful load",
+        "In toggle_recording Recording→Processing transition: send Transcribe(audio_data) to transcription thread, set state to Processing, spawn a std::thread that waits for TranscriptionComplete response",
+        "On successful transcription: call input::paste::paste_text(text), set state to Idle, hide overlay",
+        "On transcription error: set state to Error with message, keep overlay visible",
+        "On empty transcription result (silent audio): set state to Idle, hide overlay (don't paste empty string)",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Build overlay React components",
+      "description": "As a user, I want a minimal floating overlay showing recording, processing, downloading, and error states.",
+      "acceptanceCriteria": [
+        "Create src/types.ts with DictationState TypeScript type matching Rust enum: Idle | Recording (duration_ms) | Processing | Downloading (progress) | Error (message)",
+        "Create src/hooks/useDictationState.ts that listens to 'dictation-state' Tauri events via @tauri-apps/api/event listen(), returns current DictationState, defaults to Idle",
+        "Create src/components/PulseAnimation.tsx: relative container with red dot + animate-ping overlay",
+        "Create src/components/Overlay.tsx: dark frosted-glass pill (bg-black/80 backdrop-blur-xl rounded-2xl border-white/10). Shows: Recording = PulseAnimation + 'Listening...' (red), Processing = spinning border + 'Transcribing...' (blue), Downloading = spinner + 'Downloading model... XX%' (green), Error = yellow dot + message. Returns null for Idle",
+        "Update src/App.tsx to render Overlay component with centered layout",
+        "Typecheck passes (`npx tsc --noEmit`)",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Make overlay window non-activating on macOS",
+      "description": "As a user, I need the overlay to appear without stealing keyboard focus from my current app.",
+      "acceptanceCriteria": [
+        "Add make_window_non_activating(window: &tauri::WebviewWindow) function to lib.rs using cocoa crate",
+        "Set NSWindow collection behavior: NSWindowCollectionBehaviorCanJoinAllSpaces | Stationary | IgnoresCycle",
+        "Set window level to NSFloatingWindowLevel",
+        "Call make_window_non_activating on the overlay window during Tauri setup",
+        "Function is cfg(target_os = macos) gated",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Add permission checking with user-friendly errors",
+      "description": "As a user, I want clear guidance when the app needs macOS permissions so I'm not confused by silent failures.",
+      "acceptanceCriteria": [
+        "On startup in lib.rs, check Accessibility permission via check_accessibility_permission(). If denied, emit Error state with message: 'Accessibility access needed — check System Settings > Privacy > Accessibility'",
+        "Before starting recording in toggle_recording, re-check accessibility permission. If denied, emit Error state instead of starting recording",
+        "If AudioCapture::start_recording() fails (likely microphone permission), emit Error state with message: 'Microphone access needed — check System Settings > Privacy > Microphone'",
+        "Error state shows in overlay. Next hotkey press resets Error to Idle (retries permission check on subsequent press)",
+        "NSMicrophoneUsageDescription already set in tauri.conf.json infoPlist from US-001",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Add configurable hotkey with persistence",
+      "description": "As a user, I want to change the dictation hotkey so it doesn't conflict with Alfred, Raycast, or other apps.",
+      "acceptanceCriteria": [
+        "Create config handling in lib.rs (or a new config.rs module): read/write config.json from ~/Library/Application Support/com.dictate.app/config.json",
+        "Config stores hotkey as string (e.g. 'Alt+Space', 'Ctrl+Shift+D')",
+        "On startup, read config.json for saved hotkey. If no config exists, default to Alt+Space",
+        "Add Tauri command get_hotkey that returns current hotkey string",
+        "Add Tauri command set_hotkey(new_hotkey: String) that unregisters old global shortcut, registers new one, saves to config.json. Returns error if registration fails (invalid or already taken)",
+        "Register both commands in Tauri builder",
+        "Typecheck passes (`cargo check` in src-tauri)"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add hotkey settings UI",
+      "description": "As a user, I want a simple UI to view and change my dictation hotkey.",
+      "acceptanceCriteria": [
+        "Create src/components/Settings.tsx with a small settings panel showing current hotkey and a button/input to change it",
+        "Settings panel calls get_hotkey Tauri command on mount to display current hotkey",
+        "User can enter a new hotkey combination and click 'Save' to call set_hotkey Tauri command",
+        "Show success message on successful change, error message on failure",
+        "Settings accessible via a small gear icon in the overlay (visible in non-Idle states) or keyboard shortcut",
+        "Update App.tsx to include Settings component",
+        "Update capabilities/default.json if any new permissions are needed for invoke commands",
+        "Typecheck passes (`npx tsc --noEmit`)",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
