@@ -7,6 +7,13 @@ import { useAudioLevels } from "../hooks/useAudioLevels";
 import { AudioWaveform } from "./AudioWaveform";
 import { Settings } from "./Settings";
 
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 interface OverlayProps {
   state: DictationState;
 }
@@ -94,6 +101,9 @@ export function Overlay({ state }: OverlayProps) {
             {state.type === "Recording" && (
               <>
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="text-white/40 text-sm font-medium tabular-nums">
+                  {formatDuration(state.duration_ms)}
+                </span>
                 <span className="text-white/70 text-sm font-medium">
                   {state.partial_text ? "Transcribing..." : "Listening..."}
                 </span>

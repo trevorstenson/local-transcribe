@@ -6,6 +6,7 @@ use whisper_rs::{
 struct TranscriptionService {
     context: Option<WhisperContext>,
     state: Option<WhisperState>,
+    language: Option<String>,
 }
 
 impl TranscriptionService {
@@ -13,6 +14,7 @@ impl TranscriptionService {
         Self {
             context: None,
             state: None,
+            language: Some("en".to_string()),
         }
     }
 
@@ -40,7 +42,7 @@ impl TranscriptionService {
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_n_threads(4);
-        params.set_language(Some("en"));
+        params.set_language(self.language.as_deref());
         params.set_no_context(true);
         params.set_single_segment(false);
         params.set_suppress_blank(true);
@@ -65,6 +67,7 @@ impl TranscriptionService {
 
 pub enum TranscriptionRequest {
     LoadModel(String),
+    SetLanguage(Option<String>),
     Transcribe(Vec<f32>),
     TranscribePartial(Vec<f32>),
     Shutdown,
@@ -93,6 +96,9 @@ pub fn spawn_transcription_thread() -> (
                     let result = service.load_model(&path);
                     let _ = resp_tx.send(TranscriptionResponse::ModelLoaded(result));
                 }
+                TranscriptionRequest::SetLanguage(lang) => {
+                    service.language = lang;
+                }
                 TranscriptionRequest::Transcribe(audio_data) => {
                     let result = service.transcribe(&audio_data);
                     let _ = resp_tx.send(TranscriptionResponse::TranscriptionComplete(result));
@@ -113,6 +119,9 @@ pub fn spawn_transcription_thread() -> (
                             TranscriptionRequest::LoadModel(path) => {
                                 let result = service.load_model(&path);
                                 let _ = resp_tx.send(TranscriptionResponse::ModelLoaded(result));
+                            }
+                            TranscriptionRequest::SetLanguage(lang) => {
+                                service.language = lang;
                             }
                             TranscriptionRequest::Shutdown => {
                                 return;

@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+mod history;
 mod input;
 mod state;
 mod tray;
@@ -125,9 +126,10 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                         let flag = Arc::clone(&streaming_flag.0);
                         let app_stream = app_handle.clone();
 
-                        // Spawn audio level emitter (~30fps)
+                        // Spawn audio level emitter (~30fps) + duration tracker
                         let flag_levels = Arc::clone(&streaming_flag.0);
                         let app_levels = app_handle.clone();
+                        let recording_start = std::time::Instant::now();
                         std::thread::spawn(move || {
                             while flag_levels.load(Ordering::SeqCst) {
                                 let levels = {
@@ -147,6 +149,26 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 };
 
                                 let _ = app_levels.emit("audio-levels", &levels);
+
+                                // Update duration_ms in shared state
+                                let elapsed_ms = recording_start.elapsed().as_millis() as u64;
+                                let shared_state = app_levels.state::<SharedState>();
+                                let new_state = {
+                                    let mut state = shared_state.lock();
+                                    if let DictationState::Recording { partial_text, .. } = &state.dictation_state {
+                                        state.dictation_state = DictationState::Recording {
+                                            duration_ms: elapsed_ms,
+                                            partial_text: partial_text.clone(),
+                                        };
+                                        Some(state.dictation_state.clone())
+                                    } else {
+                                        None
+                                    }
+                                };
+                                if let Some(new_state) = new_state {
+                                    emit_state(&app_levels, &new_state);
+                                }
+
                                 std::thread::sleep(std::time::Duration::from_millis(33));
                             }
                         });
@@ -294,6 +316,16 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                 return;
             }
 
+            // Capture recording duration before transitioning to Processing
+            let recording_duration_ms = {
+                let state = shared_state.lock();
+                if let DictationState::Recording { duration_ms, .. } = &state.dictation_state {
+                    *duration_ms
+                } else {
+                    0
+                }
+            };
+
             // Set state to Processing
             {
                 let mut state = shared_state.lock();
@@ -334,6 +366,22 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 let _ = window.hide();
                             }
                         } else {
+                            // Record to transcription history
+                            let timestamp_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            let entry = history::HistoryEntry {
+                                id: timestamp_ms,
+                                text: trimmed.clone(),
+                                timestamp_ms,
+                                duration_ms: recording_duration_ms,
+                            };
+                            if let Err(e) = history::add_entry(entry) {
+                                log::error!("Failed to save history entry: {}", e);
+                            }
+                            let _ = app_handle_clone.emit("history-updated", ());
+
                             // Paste the transcribed text on the main thread
                             // (macOS requires AppKit/HID calls on the main thread)
                             let app_for_paste = app_handle_clone.clone();
@@ -545,6 +593,7 @@ struct ModelInfoPayload {
     description: String,
     downloaded: bool,
     selected: bool,
+    english_only: bool,
 }
 
 #[tauri::command]
@@ -560,6 +609,7 @@ fn get_models(shared_state: tauri::State<'_, SharedState>) -> Vec<ModelInfoPaylo
             description: m.description.to_string(),
             downloaded: transcription::model_manager::model_exists(m.name),
             selected: m.name == selected,
+            english_only: m.english_only,
         })
         .collect()
 }
@@ -635,6 +685,66 @@ fn set_smart_paste(
 }
 
 #[tauri::command]
+fn get_language(shared_state: tauri::State<'_, SharedState>) -> String {
+    shared_state.lock().language.clone()
+}
+
+#[tauri::command]
+async fn set_language(app: tauri::AppHandle, language: String) -> Result<(), String> {
+    // Check if we need to switch between English-only and multilingual models
+    let (current_model, needs_model_switch) = {
+        let shared_state = app.state::<SharedState>();
+        let state = shared_state.lock();
+        let current = state.selected_model.clone();
+        let is_en = transcription::model_manager::is_english_only(&current);
+        let needs_multilingual = language != "en";
+        (current.clone(), (needs_multilingual && is_en) || (!needs_multilingual && !is_en))
+    };
+
+    // Determine new model if switching is needed
+    let new_model = if needs_model_switch {
+        if language != "en" {
+            transcription::model_manager::multilingual_equivalent(&current_model)
+                .unwrap_or("base")
+                .to_string()
+        } else {
+            transcription::model_manager::english_equivalent(&current_model)
+                .unwrap_or("base.en")
+                .to_string()
+        }
+    } else {
+        current_model.clone()
+    };
+
+    // Update language in state
+    {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.language = language.clone();
+    }
+
+    // Persist to config
+    let mut cfg = config::load_config();
+    cfg.language = language.clone();
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Send language to transcription thread
+    let lang_for_whisper = if language == "auto" { None } else { Some(language) };
+    {
+        let tx = app.state::<TranscriptionSender>();
+        let tx = tx.0.lock().unwrap();
+        let _ = tx.send(TranscriptionRequest::SetLanguage(lang_for_whisper));
+    }
+
+    // If model needs switching, trigger model change
+    if needs_model_switch {
+        select_model(app, new_model).await?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn cancel_recording(app: tauri::AppHandle) {
     let shared_state = app.state::<SharedState>();
     let current_state = {
@@ -680,6 +790,31 @@ fn cancel_recording(app: tauri::AppHandle) {
         }
         _ => {}
     }
+}
+
+#[tauri::command]
+fn get_history() -> Result<Vec<history::HistoryEntry>, String> {
+    Ok(history::load_history().entries)
+}
+
+#[tauri::command]
+fn delete_history_entry(id: u64) -> Result<(), String> {
+    history::delete_entry(id).map_err(|e| format!("Failed to delete entry: {}", e))
+}
+
+#[tauri::command]
+fn clear_history() -> Result<(), String> {
+    history::clear_history().map_err(|e| format!("Failed to clear history: {}", e))
+}
+
+#[tauri::command]
+fn copy_history_entry(text: String) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| format!("Failed to access clipboard: {}", e))?;
+    clipboard
+        .set_text(text)
+        .map_err(|e| format!("Failed to copy: {}", e))?;
+    Ok(())
 }
 
 /// Sends LoadModel request to transcription thread and waits for response.
@@ -734,6 +869,7 @@ pub fn run() {
     let hotkey = app_config.hotkey.clone();
     let selected_model = app_config.selected_model.clone();
     let smart_paste = app_config.smart_paste;
+    let language = app_config.language.clone();
 
     // Create shared state with persisted settings
     let shared_state: SharedState = Arc::new(parking_lot::Mutex::new(state::AppState {
@@ -741,6 +877,7 @@ pub fn run() {
         model_path: None,
         selected_model,
         smart_paste,
+        language: language.clone(),
     }));
 
     // Spawn transcription thread
@@ -754,7 +891,7 @@ pub fn run() {
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, save_overlay_position, cancel_recording])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, get_language, set_language, save_overlay_position, cancel_recording, get_history, delete_history_entry, clear_history, copy_history_entry])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
@@ -802,6 +939,14 @@ pub fn run() {
                 if let Some(window) = app_handle.get_webview_window("overlay") {
                     let _ = window.show();
                 }
+            }
+
+            // Send initial language to transcription thread
+            {
+                let tx = app.state::<TranscriptionSender>();
+                let tx = tx.0.lock().unwrap();
+                let lang_for_whisper = if language == "auto" { None } else { Some(language) };
+                let _ = tx.send(TranscriptionRequest::SetLanguage(lang_for_whisper));
             }
 
             // Download/load model on startup in a background thread

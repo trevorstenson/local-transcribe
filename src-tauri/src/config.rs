@@ -4,9 +4,14 @@ use std::path::PathBuf;
 
 const DEFAULT_HOTKEY: &str = "alt+space";
 const DEFAULT_MODEL: &str = "base.en";
+const DEFAULT_LANGUAGE: &str = "en";
 
 fn default_model() -> String {
     DEFAULT_MODEL.to_string()
+}
+
+fn default_language() -> String {
+    DEFAULT_LANGUAGE.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +25,8 @@ pub struct AppConfig {
     pub overlay_x: Option<f64>,
     #[serde(default)]
     pub overlay_y: Option<f64>,
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 fn default_true() -> bool {
@@ -34,6 +41,7 @@ impl Default for AppConfig {
             smart_paste: true,
             overlay_x: None,
             overlay_y: None,
+            language: default_language(),
         }
     }
 }
