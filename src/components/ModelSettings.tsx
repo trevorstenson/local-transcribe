@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { VocabularyModal } from "./VocabularyModal";
 
 interface ModelInfo {
   name: string;
@@ -40,6 +41,8 @@ export function ModelSettings() {
   const [smartPaste, setSmartPaste] = useState(true);
   const [autostart, setAutostart] = useState(false);
   const [language, setLanguage] = useState("en");
+  const [vocabEnabled, setVocabEnabled] = useState<boolean>(true);
+  const [showVocabModal, setShowVocabModal] = useState(false);
 
   const fetchModels = async () => {
     try {
@@ -54,6 +57,7 @@ export function ModelSettings() {
     fetchModels();
     invoke<boolean>("get_smart_paste").then(setSmartPaste);
     invoke<string>("get_language").then(setLanguage);
+    invoke<boolean>("get_vocab_enabled").then(setVocabEnabled);
     isEnabled().then(setAutostart).catch(() => {});
 
     const unlistenModel = listen("model-changed", () => {
@@ -105,6 +109,17 @@ export function ModelSettings() {
     }
   };
 
+  const handleToggleVocab = async () => {
+    const newValue = !vocabEnabled;
+    setVocabEnabled(newValue);
+    try {
+      await invoke("set_vocab_enabled", { enabled: newValue });
+    } catch (e) {
+      setVocabEnabled(!newValue);
+      setError(String(e));
+    }
+  };
+
   const handleSelectModel = async (modelName: string) => {
     setLoading(modelName);
     setError(null);
@@ -146,7 +161,7 @@ export function ModelSettings() {
         </select>
       </div>
 
-      <div className="flex flex-col gap-2 flex-1 overflow-y-auto">
+      <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto pr-1">
         {filteredModels.map((model) => (
           <ModelCard
             key={model.name}
@@ -158,7 +173,7 @@ export function ModelSettings() {
         ))}
       </div>
 
-      <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
+      <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3 shrink-0">
         <button
           onClick={handleToggleSmartPaste}
           className="flex items-center justify-between w-full"
@@ -200,9 +215,44 @@ export function ModelSettings() {
             <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
           </div>
         </button>
+
+        <button
+          onClick={handleToggleVocab}
+          className="flex items-center justify-between w-full"
+        >
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-medium">Personal Vocabulary</span>
+            <span className="text-xs text-white/40">
+              {vocabEnabled
+                ? "Corrects transcriptions using your custom dictionary"
+                : "Vocabulary corrections are disabled"}
+            </span>
+          </div>
+          <div
+            className={`w-9 h-5 rounded-full transition-colors flex items-center ${
+              vocabEnabled ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
+            }`}
+          >
+            <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
+          </div>
+        </button>
+
+        {vocabEnabled && (
+          <button
+            onClick={() => setShowVocabModal(true)}
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors text-left pl-0.5"
+          >
+            Manage Vocabulary...
+          </button>
+        )}
       </div>
 
       {error && <div className="mt-3 text-red-400 text-sm">{error}</div>}
+
+      <VocabularyModal
+        visible={showVocabModal}
+        onClose={() => setShowVocabModal(false)}
+      />
     </div>
   );
 }

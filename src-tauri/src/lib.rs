@@ -5,6 +5,7 @@ mod input;
 mod state;
 mod tray;
 mod transcription;
+mod vocabulary;
 
 use serde::Serialize;
 use state::{DictationState, SharedState, StatePayload};
@@ -388,14 +389,31 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 let _ = window.hide();
                             }
                         } else {
-                            // Record to transcription history
+                            // Check if vocabulary corrections should be applied
+                            let vocab_enabled = app_handle_clone.state::<SharedState>().lock().vocab_enabled;
+                            let correction_result = if vocab_enabled {
+                                let vocab = vocabulary::load_vocabulary();
+                                let result = vocabulary::apply_corrections(&trimmed, &vocab);
+                                if result.corrections.is_empty() {
+                                    None
+                                } else {
+                                    Some(result)
+                                }
+                            } else {
+                                None
+                            };
+
+                            // Record to transcription history (use corrected text if available)
+                            let history_text = correction_result
+                                .as_ref()
+                                .map_or_else(|| trimmed.clone(), |r| r.text.clone());
                             let timestamp_ms = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64;
                             let entry = history::HistoryEntry {
                                 id: timestamp_ms,
-                                text: trimmed.clone(),
+                                text: history_text.clone(),
                                 timestamp_ms,
                                 duration_ms: recording_duration_ms,
                             };
@@ -404,39 +422,56 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                             }
                             let _ = app_handle_clone.emit("history-updated", ());
 
-                            // Paste the transcribed text on the main thread
-                            // (macOS requires AppKit/HID calls on the main thread)
-                            let app_for_paste = app_handle_clone.clone();
-                            let text_to_paste = trimmed.clone();
-                            let smart_paste = app_handle_clone.state::<SharedState>().lock().smart_paste;
-                            let _ = app_handle_clone.run_on_main_thread(move || {
-                                if let Err(e) = input::paste::paste_text(&text_to_paste, smart_paste) {
-                                    log::error!("Failed to paste text: {}", e);
-                                    let error_state = DictationState::Error {
-                                        message: format!("Failed to paste: {}", e),
-                                    };
+                            if let Some(correction_result) = correction_result {
+                                // Corrections found — show preview, do NOT paste yet
+                                let preview_state = DictationState::CorrectionPreview {
+                                    text: correction_result.text.clone(),
+                                    original_text: trimmed.clone(),
+                                    corrections: correction_result.corrections,
+                                };
+                                let shared_state = app_handle_clone.state::<SharedState>();
+                                {
+                                    let mut state = shared_state.lock();
+                                    state.pending_original_text = Some(trimmed);
+                                    state.pending_corrected_text = Some(correction_result.text);
+                                    state.dictation_state = preview_state.clone();
+                                }
+                                emit_state(&app_handle_clone, &preview_state);
+                                // Overlay stays visible for CorrectionPreview
+                            } else {
+                                // No corrections — paste immediately (existing flow)
+                                let app_for_paste = app_handle_clone.clone();
+                                let text_to_paste = trimmed.clone();
+                                let smart_paste = app_handle_clone.state::<SharedState>().lock().smart_paste;
+                                let _ = app_handle_clone.run_on_main_thread(move || {
+                                    if let Err(e) = input::paste::paste_text(&text_to_paste, smart_paste) {
+                                        log::error!("Failed to paste text: {}", e);
+                                        let error_state = DictationState::Error {
+                                            message: format!("Failed to paste: {}", e),
+                                        };
+                                        let shared_state = app_for_paste.state::<SharedState>();
+                                        {
+                                            let mut state = shared_state.lock();
+                                            state.dictation_state = error_state.clone();
+                                        }
+                                        emit_state(&app_for_paste, &error_state);
+                                        return;
+                                    }
+
+                                    // Success — back to Idle
                                     let shared_state = app_for_paste.state::<SharedState>();
                                     {
                                         let mut state = shared_state.lock();
-                                        state.dictation_state = error_state.clone();
+                                        state.dictation_state = DictationState::Idle;
                                     }
-                                    emit_state(&app_for_paste, &error_state);
-                                    return;
-                                }
-
-                                // Success — back to Idle
-                                let shared_state = app_for_paste.state::<SharedState>();
-                                {
-                                    let mut state = shared_state.lock();
-                                    state.dictation_state = DictationState::Idle;
-                                }
-                                emit_state(&app_for_paste, &DictationState::Idle);
-                                if let Some(window) =
-                                    app_for_paste.get_webview_window("overlay")
-                                {
-                                    let _ = window.hide();
-                                }
-                            });
+                                    emit_state(&app_for_paste, &DictationState::Idle);
+                                    if let Some(window) =
+                                        app_for_paste.get_webview_window("overlay")
+                                    {
+                                        let _ = window.hide();
+                                    }
+                                });
+                            }
                         }
                     }
                     Ok(TranscriptionResponse::TranscriptionComplete(Err(e))) => {
@@ -471,8 +506,8 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                 }
             });
         }
-        DictationState::Processing | DictationState::Downloading { .. } => {
-            // Ignore hotkey during processing or downloading
+        DictationState::Processing | DictationState::Downloading { .. } | DictationState::CorrectionPreview { .. } => {
+            // Ignore hotkey during processing, downloading, or correction preview
         }
         DictationState::Error { .. } => {
             // Reset to Idle on error
@@ -707,6 +742,152 @@ fn set_smart_paste(
 }
 
 #[tauri::command]
+fn get_vocab_enabled(shared_state: tauri::State<'_, SharedState>) -> bool {
+    shared_state.lock().vocab_enabled
+}
+
+#[tauri::command]
+fn set_vocab_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    // Update in-memory state
+    {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.vocab_enabled = enabled;
+    }
+
+    // Persist to config
+    let mut cfg = config::load_config();
+    cfg.vocab_enabled = enabled;
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_vocabulary() -> Vec<vocabulary::VocabEntry> {
+    vocabulary::load_vocabulary().entries
+}
+
+#[tauri::command]
+fn add_vocab_entry(phrase: String, replacement: String) -> Result<(), String> {
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let entry = vocabulary::VocabEntry {
+        id: timestamp_ms,
+        phrase,
+        replacement,
+        enabled: true,
+    };
+    vocabulary::add_entry(entry).map_err(|e| format!("Failed to add vocab entry: {}", e))
+}
+
+#[tauri::command]
+fn update_vocab_entry(id: u64, phrase: String, replacement: String, enabled: bool) -> Result<(), String> {
+    vocabulary::update_entry(id, phrase, replacement, enabled)
+        .map_err(|e| format!("Failed to update vocab entry: {}", e))
+}
+
+#[tauri::command]
+fn delete_vocab_entry(id: u64) -> Result<(), String> {
+    vocabulary::delete_entry(id).map_err(|e| format!("Failed to delete vocab entry: {}", e))
+}
+
+#[tauri::command]
+fn accept_corrections(app: tauri::AppHandle, shared_state: tauri::State<'_, SharedState>) -> Result<(), String> {
+    let (corrected_text, smart_paste) = {
+        let mut state = shared_state.lock();
+        let text = state.pending_corrected_text.take()
+            .ok_or_else(|| "No pending corrections to accept".to_string())?;
+        state.pending_original_text = None;
+        let sp = state.smart_paste;
+        (text, sp)
+    };
+
+    let app_for_paste = app.clone();
+    let text_to_paste = corrected_text;
+    app.run_on_main_thread(move || {
+        if let Err(e) = input::paste::paste_text(&text_to_paste, smart_paste) {
+            log::error!("Failed to paste corrected text: {}", e);
+            let error_state = DictationState::Error {
+                message: format!("Failed to paste: {}", e),
+            };
+            let shared_state = app_for_paste.state::<SharedState>();
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = error_state.clone();
+            }
+            emit_state(&app_for_paste, &error_state);
+            return;
+        }
+
+        let shared_state = app_for_paste.state::<SharedState>();
+        {
+            let mut state = shared_state.lock();
+            state.dictation_state = DictationState::Idle;
+        }
+        emit_state(&app_for_paste, &DictationState::Idle);
+        if let Some(window) = app_for_paste.get_webview_window("overlay") {
+            let _ = window.hide();
+        }
+    }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn undo_corrections(app: tauri::AppHandle, shared_state: tauri::State<'_, SharedState>) -> Result<(), String> {
+    let (original_text, smart_paste) = {
+        let mut state = shared_state.lock();
+        let text = state.pending_original_text.take()
+            .ok_or_else(|| "No pending corrections to undo".to_string())?;
+        state.pending_corrected_text = None;
+        let sp = state.smart_paste;
+        (text, sp)
+    };
+
+    // Update the most recent history entry to use the original text
+    if let Err(e) = history::update_most_recent_text(original_text.clone()) {
+        log::error!("Failed to update history entry: {}", e);
+    }
+    let _ = app.emit("history-updated", ());
+
+    let app_for_paste = app.clone();
+    let text_to_paste = original_text;
+    app.run_on_main_thread(move || {
+        if let Err(e) = input::paste::paste_text(&text_to_paste, smart_paste) {
+            log::error!("Failed to paste original text: {}", e);
+            let error_state = DictationState::Error {
+                message: format!("Failed to paste: {}", e),
+            };
+            let shared_state = app_for_paste.state::<SharedState>();
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = error_state.clone();
+            }
+            emit_state(&app_for_paste, &error_state);
+            return;
+        }
+
+        let shared_state = app_for_paste.state::<SharedState>();
+        {
+            let mut state = shared_state.lock();
+            state.dictation_state = DictationState::Idle;
+        }
+        emit_state(&app_for_paste, &DictationState::Idle);
+        if let Some(window) = app_for_paste.get_webview_window("overlay") {
+            let _ = window.hide();
+        }
+    }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_language(shared_state: tauri::State<'_, SharedState>) -> String {
     shared_state.lock().language.clone()
 }
@@ -903,6 +1084,7 @@ pub fn run() {
     let hotkey = app_config.hotkey.clone();
     let selected_model = app_config.selected_model.clone();
     let smart_paste = app_config.smart_paste;
+    let vocab_enabled = app_config.vocab_enabled;
     let language = app_config.language.clone();
 
     // Create shared state with persisted settings
@@ -912,6 +1094,9 @@ pub fn run() {
         selected_model,
         smart_paste,
         language: language.clone(),
+        vocab_enabled,
+        pending_original_text: None,
+        pending_corrected_text: None,
     }));
 
     // Spawn transcription thread
@@ -929,7 +1114,7 @@ pub fn run() {
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, get_language, set_language, save_overlay_position, cancel_recording, get_history, delete_history_entry, clear_history, copy_history_entry])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, get_vocab_enabled, set_vocab_enabled, get_vocabulary, add_vocab_entry, update_vocab_entry, delete_vocab_entry, accept_corrections, undo_corrections, get_language, set_language, save_overlay_position, cancel_recording, get_history, delete_history_entry, clear_history, copy_history_entry])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(

@@ -61,3 +61,11 @@ pub fn delete_entry(id: u64) -> Result<()> {
 pub fn clear_history() -> Result<()> {
     save_history(&TranscriptionHistory::default())
 }
+
+pub fn update_most_recent_text(new_text: String) -> Result<()> {
+    let mut history = load_history();
+    if let Some(entry) = history.entries.first_mut() {
+        entry.text = new_text;
+    }
+    save_history(&history)
+}
