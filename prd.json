@@ -111,8 +111,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DictationState uses serde tag='type' for discriminated union serialization. SharedState uses parking_lot::Mutex (not std::sync::Mutex) for ergonomic locking without .unwrap()."
     },
     {
       "id": "US-007",
@@ -129,8 +129,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Global shortcut registered via tauri_plugin_global_shortcut::Builder inside setup closure. SharedState, TranscriptionSender, TranscriptionReceiver, and ActiveCapture all stored as Tauri managed state. toggle_recording handles all DictationState transitions. US-008 will wire up the actual transcription pipeline."
     },
     {
       "id": "US-008",

@@ -13,6 +13,12 @@
 - enigo 0.6: `Enigo::new(&Settings::default())`, uses `key(Key::Meta, Direction::Press)` / `key(Key::Unicode('v'), Direction::Click)` / `key(Key::Meta, Direction::Release)` — single `key()` method with `Direction` enum, NOT separate key_down/key_up methods
 - arboard 3.6: `Clipboard::new()?.set_text(text)?` — simple clipboard access, no features needed
 - macOS accessibility check: `extern "C" { fn AXIsProcessTrusted() -> bool; }` — no extra crate needed, comes from ApplicationServices framework linked by default
+- DictationState enum uses `#[serde(tag = "type")]` — frontend receives `{ type: "Recording", duration_ms: 0 }` etc.
+- SharedState = `Arc<parking_lot::Mutex<AppState>>` — use `.lock()` directly (no .unwrap() needed unlike std::sync::Mutex)
+- Tauri v2 global shortcut: register via `tauri_plugin_global_shortcut::Builder::new().with_shortcuts(["alt+space"]).with_handler(|app, shortcut, event| { ... }).build()` inside `setup()` closure on `app.handle().plugin(...)`. Handler receives `&AppHandle`, check `event.state == ShortcutState::Pressed`.
+- Tauri v2 managed state: `app.manage(T)` stores state, `app.state::<T>()` retrieves `State<T>` (derefs to &T). Type must be `Send + Sync + 'static`. Use newtype wrappers for channel senders/receivers.
+- Tauri v2 events: `app_handle.emit("event-name", payload)` requires `use tauri::Emitter;` trait. Payload must be `Serialize + Clone`.
+- Tauri v2 windows: `app.get_webview_window("label")` returns `Option<WebviewWindow>` with `.show()` / `.hide()` methods.
 ---
 
 ## 2026-02-14 - US-001
@@ -87,4 +93,33 @@
   - `Key::Meta` is the Cmd key on macOS (deprecated alias `Key::Command` exists but don't use it)
   - `AXIsProcessTrusted()` is available via extern C without any extra crate — it's in the ApplicationServices framework linked by default on macOS
   - arboard `Clipboard::new()` and `set_text()` return Result types that need error mapping (not anyhow-compatible directly)
+---
+
+## 2026-02-14 - US-006
+- Created state types and shared state for the Tauri app
+- `state.rs`: DictationState enum (serde tagged with `#[serde(tag = "type")]`), StatePayload struct, AppState struct (dictation_state, model_path, selected_model), SharedState type alias
+- Added `mod state;` to lib.rs
+- Files changed: 2 (1 new state.rs + lib.rs modified)
+- **Learnings for future iterations:**
+  - DictationState uses `#[serde(tag = "type")]` for internally tagged enum — frontend will receive objects like `{ type: "Recording", duration_ms: 0 }`
+  - parking_lot::Mutex provides `.lock()` that returns a guard directly (no `Result` wrapping like std::sync::Mutex), making it ergonomic for app state
+  - SharedState = `Arc<Mutex<AppState>>` — clone the Arc to share across threads/closures
+  - AppState defaults: selected_model = "base.en", dictation_state = Idle, model_path = None
+---
+
+## 2026-02-14 - US-007
+- Wired up Tauri app with global shortcut (Alt+Space) and state event emission
+- `lib.rs`: Complete rewrite — creates SharedState, spawns transcription thread, registers global shortcut plugin, implements toggle_recording and emit_state functions
+- Newtype wrappers for managed state: `TranscriptionSender`, `TranscriptionReceiver`, `ActiveCapture` (wrapping mpsc channels and active AudioCapture)
+- `toggle_recording`: Idle→starts AudioCapture + shows overlay, Recording→stops capture + hides overlay, Processing/Downloading→ignored, Error→resets to Idle + hides overlay
+- `emit_state`: emits `dictation-state` event with StatePayload to frontend
+- Global shortcut registered via `tauri_plugin_global_shortcut::Builder` inside setup closure
+- Files changed: 1 (lib.rs rewritten)
+- **Learnings for future iterations:**
+  - Tauri v2 global shortcut plugin must be registered inside `setup()` via `app.handle().plugin(Builder::new().with_shortcuts(...).with_handler(...).build())`
+  - Handler receives `(&AppHandle, &Shortcut, ShortcutEvent)` — check `event.state == ShortcutState::Pressed` to avoid double-firing
+  - `tauri::Emitter` trait must be in scope for `app_handle.emit()` to work
+  - `tauri::Manager` trait must be in scope for `app_handle.state()`, `get_webview_window()`, `manage()` to work
+  - Tauri managed state uses `TypeId` — need newtype wrappers for multiple instances of same underlying type (e.g., can't manage two `Mutex<T>`)
+  - AudioCapture needs to be stored somewhere during recording (ActiveCapture wrapper) since toggle_recording is called twice (start/stop)
 ---
