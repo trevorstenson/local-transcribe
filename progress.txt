@@ -1,0 +1,226 @@
+## Codebase Patterns
+- Tauri v2 uses separate `src-tauri/Info.plist` for custom Info.plist keys (like NSMicrophoneUsageDescription) - it merges with generated values. Don't use `infoPlist` map in tauri.conf.json.
+- Tauri v2 entitlements go in `bundle.macOS.entitlements` as a path string (e.g., `"./entitlements.plist"`)
+- `cmake` is required for building whisper-rs (compiles whisper.cpp from source). On macOS, whisper.cpp needs `std::filesystem` so set `MACOSX_DEPLOYMENT_TARGET=10.15` (e.g. `export MACOSX_DEPLOYMENT_TARGET=10.15` before `cargo build`, or use `npm run tauri build` which sets it).
+- Rust lib name is `dictate_lib` (in Cargo.toml [lib] section), referenced in main.rs as `dictate_lib::run()`
+- TypeScript check: `npx tsc --noEmit`, Rust check: `cargo check` in `src-tauri/`
+- cpal 0.17: `SampleRate` is `pub type SampleRate = u32` (not a tuple struct). Use `config.sample_rate()` directly, NOT `.0`
+- cpal 0.17: `build_input_stream` takes 4 args: config, data_callback, error_callback, timeout (Option<Duration>). Must call `.play()` after building. Drop stream to stop it.
+- Whisper models stored at `~/Library/Application Support/com.dictate.app/models/` — use `transcription::model_manager::models_dir()`
+- Model catalog in `AVAILABLE_MODELS` const array — use `model_exists()` / `model_path()` to check/locate cached models
+- whisper-rs 0.15: `WhisperContext::new_with_params(path, WhisperContextParameters::default())` to load model. `ctx.create_state()` for WhisperState. `FullParams::new(SamplingStrategy::Greedy { best_of: 1 })` for params. `state.full(params, &audio)` then `state.as_iter()` with `.to_str_lossy()` to collect text.
+- Transcription runs on a dedicated std::thread with mpsc channels (TranscriptionRequest/TranscriptionResponse) since WhisperState is not Send+Sync in all contexts
+- enigo 0.6: `Enigo::new(&Settings::default())`, uses `key(Key::Meta, Direction::Press)` / `key(Key::Unicode('v'), Direction::Click)` / `key(Key::Meta, Direction::Release)` — single `key()` method with `Direction` enum, NOT separate key_down/key_up methods
+- arboard 3.6: `Clipboard::new()?.set_text(text)?` — simple clipboard access, no features needed
+- macOS accessibility check: `extern "C" { fn AXIsProcessTrusted() -> bool; }` — no extra crate needed, comes from ApplicationServices framework linked by default
+- DictationState enum uses `#[serde(tag = "type")]` — frontend receives `{ type: "Recording", duration_ms: 0 }` etc.
+- SharedState = `Arc<parking_lot::Mutex<AppState>>` — use `.lock()` directly (no .unwrap() needed unlike std::sync::Mutex)
+- Tauri v2 global shortcut: register via `tauri_plugin_global_shortcut::Builder::new().with_shortcuts(["alt+space"]).with_handler(|app, shortcut, event| { ... }).build()` inside `setup()` closure on `app.handle().plugin(...)`. Handler receives `&AppHandle`, check `event.state == ShortcutState::Pressed`.
+- Tauri v2 managed state: `app.manage(T)` stores state, `app.state::<T>()` retrieves `State<T>` (derefs to &T). Type must be `Send + Sync + 'static`. Use newtype wrappers for channel senders/receivers.
+- Tauri v2 events: `app_handle.emit("event-name", payload)` requires `use tauri::Emitter;` trait. Payload must be `Serialize + Clone`.
+- Tauri v2 windows: `app.get_webview_window("label")` returns `Option<WebviewWindow>` with `.show()` / `.hide()` methods.
+- Tauri `setup()` runs on main thread — spawn background threads for long operations (model download/load). Use `app.handle().clone()` to get owned AppHandle for threads.
+- Frontend Tauri event listener: `listen<PayloadType>("event-name", (event) => { event.payload... })` from `@tauri-apps/api/event`. Returns `Promise<UnlistenFn>` — call in useEffect cleanup via `.then(fn => fn())`.
+- To call async functions from std::thread: `tokio::runtime::Runtime::new().unwrap().block_on(async { ... })`
+- Transcription result handling: spawn std::thread to block on `mpsc::recv()`, then update state/paste/hide overlay from that thread.
+- Tauri v2 `WebviewWindow::ns_window()` returns `*mut c_void` — cast to `cocoa::base::id` for NSWindow trait methods
+- cocoa 0.26: `NSWindowCollectionBehavior` bitflags for CanJoinAllSpaces | Stationary | IgnoresCycle, `setLevel_(3)` for NSFloatingWindowLevel
+- `#[cfg(target_os = "macos")]` gate platform-specific functions, use `#[cfg(target_os = "macos")]` on call sites too
+- App config stored at `~/Library/Application Support/com.dictate.app/config.json` — use `config::load_config()` / `config::save_config()`
+- Tauri v2 global shortcut runtime management: `use tauri_plugin_global_shortcut::GlobalShortcutExt;` then `app.global_shortcut().unregister(key)` / `.on_shortcut(key, handler)` / `.is_registered(key)`. Requires `&str` not `&String`.
+- Tauri commands: `#[tauri::command] fn name(...)`, register with `.invoke_handler(tauri::generate_handler![cmd1, cmd2])`. Commands returning `Result<T, String>` auto-serialize errors to frontend.
+- Tauri v2 `core:default` capability covers custom invoke commands — no extra permissions needed in capabilities/default.json for `invoke()` calls
+- Frontend invoke: `import { invoke } from "@tauri-apps/api/core"` — use `invoke<ReturnType>("command_name", { argName: value })`, args auto-convert camelCase→snake_case
+---
+
+## 2026-02-14 - US-001
+- Scaffolded Tauri v2 + React + TypeScript project using `npm create tauri-app@latest`
+- Configured tauri.conf.json: productName "Dictate", identifier "com.dictate.app", macOSPrivateApi true, overlay window (280x120, transparent, alwaysOnTop, no decorations, hidden by default)
+- Created entitlements.plist (no sandbox, audio-input) and Info.plist (NSMicrophoneUsageDescription)
+- Configured capabilities/default.json with core, window, and global-shortcut permissions
+- Set up Cargo.toml with all required dependencies including whisper-rs (metal), cpal, arboard, enigo, tauri-plugin-global-shortcut, reqwest, etc.
+- Set up package.json with React 19, Tauri API, plugin-global-shortcut, Tailwind CSS 3, Vite, TypeScript
+- Created globals.css with transparent body for overlay, tailwind.config.js, postcss.config.js
+- Minimal lib.rs (just runs Tauri builder) and main.rs entry point
+- Files changed: 39 new files (scaffold + config + dependencies)
+- **Learnings for future iterations:**
+  - `npm create tauri-app@latest` scaffolds into a subdirectory, need to copy files out
+  - Tauri v2 does NOT support `infoPlist` as a map in tauri.conf.json bundle config - use separate Info.plist file
+  - `cmake` must be installed for whisper-rs to compile (uses cmake crate internally)
+  - The Tauri scaffold generates `tauri-plugin-opener` by default - we replaced it with our own dependencies
+  - Cargo.lock should be committed for reproducible builds
+---
+
+## 2026-02-14 - US-002
+- Created audio capture module with resampler for Whisper input
+- `audio/resampler.rs`: Linear interpolation resampler (from_rate → to_rate), returns input unchanged if rates match or empty
+- `audio/capture.rs`: `AudioCapture` struct using cpal for mic input — supports F32 and I16 sample formats, converts multi-channel to mono, resamples to 16kHz on stop
+- `audio/mod.rs`: Re-exports capture and resampler modules
+- Added `mod audio;` to lib.rs
+- Files changed: 4 (3 new audio module files + lib.rs modified)
+- **Learnings for future iterations:**
+  - cpal 0.17 `SampleRate` is a type alias for `u32`, not a tuple struct — use `config.sample_rate()` directly without `.0`
+  - `build_input_stream` requires 4 args including `None` timeout as last param
+  - Stream must be stored (has `#[must_use]`) — dropping stops recording
+  - `SampleFormat` is `#[non_exhaustive]` so need a catch-all match arm
+---
+
+## 2026-02-14 - US-003
+- Created Whisper model manager with HuggingFace download capability
+- `transcription/mod.rs`: Re-exports model_manager module
+- `transcription/model_manager.rs`: ModelInfo struct, AVAILABLE_MODELS catalog (5 models), models_dir(), model_exists(), model_path(), async download_model() with progress callback
+- Added `mod transcription;` to lib.rs
+- Files changed: 3 (2 new transcription module files + lib.rs modified)
+- **Learnings for future iterations:**
+  - HuggingFace model URLs follow pattern: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}`
+  - Model filenames follow pattern: `ggml-{model_name}.bin` (with dots replaced, e.g., `ggml-base.en.bin`)
+  - Models are stored in `~/Library/Application Support/com.dictate.app/models/` via `dirs::data_dir()`
+  - `reqwest::Response::bytes_stream()` + `futures_util::StreamExt::next()` for chunked downloads with progress
+---
+
+## 2026-02-14 - US-004
+- Created transcription engine with dedicated thread for Whisper inference
+- `transcription/whisper.rs`: TranscriptionService (owns WhisperContext), TranscriptionRequest/TranscriptionResponse enums, spawn_transcription_thread() with mpsc channels
+- TranscriptionService::load_model() creates WhisperContext with default params
+- TranscriptionService::transcribe() creates WhisperState, configures FullParams (Greedy best_of:1, 4 threads, English, no_context, suppress_blank, suppress_nst, no timestamps, no progress printing), runs full(), collects segment text via as_iter()
+- Updated transcription/mod.rs to re-export whisper module
+- Files changed: 2 (1 new whisper.rs + mod.rs modified)
+- **Learnings for future iterations:**
+  - whisper-rs 0.15 API: `WhisperContext::new_with_params(path, WhisperContextParameters::default())` for loading
+  - `ctx.create_state()` returns a mutable WhisperState needed for `full(params, audio_data)`
+  - `state.as_iter()` returns segment iterator, use `.to_str_lossy()` for text (handles invalid UTF-8)
+  - `set_no_context(true)` prevents using prior context for each transcription — important for independent dictation segments
+  - `set_suppress_nst(true)` suppresses non-speech tokens for cleaner output
+  - std::sync::mpsc used for thread communication (not tokio) since the transcription thread is a plain std::thread
+---
+
+## 2026-02-14 - US-005
+- Created text paste module with accessibility permission check
+- `input/mod.rs`: Re-exports paste module
+- `input/paste.rs`: `paste_text(text)` writes to clipboard via arboard, sleeps 50ms, simulates Cmd+V via enigo (Meta press, Unicode('v') click, Meta release). `check_accessibility_permission()` calls `AXIsProcessTrusted()` via extern C on macOS, returns true on other platforms
+- Added `mod input;` to lib.rs
+- Files changed: 3 (2 new input module files + lib.rs modified)
+- **Learnings for future iterations:**
+  - enigo 0.6 uses a unified `key(Key, Direction)` method — Direction::Press/Release/Click, NOT separate key_down/key_up functions
+  - `Key::Meta` is the Cmd key on macOS (deprecated alias `Key::Command` exists but don't use it)
+  - `AXIsProcessTrusted()` is available via extern C without any extra crate — it's in the ApplicationServices framework linked by default on macOS
+  - arboard `Clipboard::new()` and `set_text()` return Result types that need error mapping (not anyhow-compatible directly)
+---
+
+## 2026-02-14 - US-006
+- Created state types and shared state for the Tauri app
+- `state.rs`: DictationState enum (serde tagged with `#[serde(tag = "type")]`), StatePayload struct, AppState struct (dictation_state, model_path, selected_model), SharedState type alias
+- Added `mod state;` to lib.rs
+- Files changed: 2 (1 new state.rs + lib.rs modified)
+- **Learnings for future iterations:**
+  - DictationState uses `#[serde(tag = "type")]` for internally tagged enum — frontend will receive objects like `{ type: "Recording", duration_ms: 0 }`
+  - parking_lot::Mutex provides `.lock()` that returns a guard directly (no `Result` wrapping like std::sync::Mutex), making it ergonomic for app state
+  - SharedState = `Arc<Mutex<AppState>>` — clone the Arc to share across threads/closures
+  - AppState defaults: selected_model = "base.en", dictation_state = Idle, model_path = None
+---
+
+## 2026-02-14 - US-007
+- Wired up Tauri app with global shortcut (Alt+Space) and state event emission
+- `lib.rs`: Complete rewrite — creates SharedState, spawns transcription thread, registers global shortcut plugin, implements toggle_recording and emit_state functions
+- Newtype wrappers for managed state: `TranscriptionSender`, `TranscriptionReceiver`, `ActiveCapture` (wrapping mpsc channels and active AudioCapture)
+- `toggle_recording`: Idle→starts AudioCapture + shows overlay, Recording→stops capture + hides overlay, Processing/Downloading→ignored, Error→resets to Idle + hides overlay
+- `emit_state`: emits `dictation-state` event with StatePayload to frontend
+- Global shortcut registered via `tauri_plugin_global_shortcut::Builder` inside setup closure
+- Files changed: 1 (lib.rs rewritten)
+- **Learnings for future iterations:**
+  - Tauri v2 global shortcut plugin must be registered inside `setup()` via `app.handle().plugin(Builder::new().with_shortcuts(...).with_handler(...).build())`
+  - Handler receives `(&AppHandle, &Shortcut, ShortcutEvent)` — check `event.state == ShortcutState::Pressed` to avoid double-firing
+  - `tauri::Emitter` trait must be in scope for `app_handle.emit()` to work
+  - `tauri::Manager` trait must be in scope for `app_handle.state()`, `get_webview_window()`, `manage()` to work
+  - Tauri managed state uses `TypeId` — need newtype wrappers for multiple instances of same underlying type (e.g., can't manage two `Mutex<T>`)
+  - AudioCapture needs to be stored somewhere during recording (ActiveCapture wrapper) since toggle_recording is called twice (start/stop)
+---
+
+## 2026-02-14 - US-008
+- Added model download on startup and full recording→transcription→paste pipeline
+- `lib.rs`: Added `setup_model()` function that checks if model exists, downloads if needed with progress events, then loads into transcription thread
+- `lib.rs`: Added `load_model()` helper that sends LoadModel request and waits for ModelLoaded response, updates SharedState with model_path
+- `lib.rs`: Changed Recording→stop transition to send audio to transcription thread (Processing state), spawn a result-waiting thread
+- Result handling: successful transcription → `paste_text()` → Idle + hide overlay; empty text → Idle + hide (no paste); error → Error state + overlay stays visible
+- Download uses `tokio::runtime::Runtime::new().block_on()` since setup runs in a std::thread (not an async context)
+- Files changed: 1 (lib.rs modified — added ~220 lines)
+- **Learnings for future iterations:**
+  - Tauri `setup()` closure runs on the main thread — long operations (model download/load) must be spawned to a background thread to avoid blocking the UI
+  - `tokio::runtime::Runtime::new().block_on()` is needed to call async functions (like `download_model`) from a synchronous std::thread context
+  - `app.handle().clone()` produces an owned `AppHandle` that can be moved into spawned threads (it's `Send + Sync`)
+  - When waiting for transcription results, spawn a std::thread that blocks on `mpsc::recv()` — don't block the shortcut handler thread
+  - Empty/silent audio produces empty string from Whisper — check `.trim().is_empty()` before pasting to avoid inserting blank text
+---
+
+## 2026-02-14 - US-009
+- Built overlay React components for all dictation states
+- `src/types.ts`: DictationState discriminated union type matching Rust serde(tag="type") enum — Idle, Recording (duration_ms), Processing, Downloading (progress), Error (message)
+- `src/hooks/useDictationState.ts`: Custom hook that listens to `dictation-state` Tauri events via `@tauri-apps/api/event` `listen()`, defaults to Idle state
+- `src/components/PulseAnimation.tsx`: Red dot with animate-ping overlay for recording indicator
+- `src/components/Overlay.tsx`: Dark frosted-glass pill (bg-black/80 backdrop-blur-xl rounded-2xl border-white/10) displaying state-specific UI: Recording (red pulse + "Listening..."), Processing (blue spinner + "Transcribing..."), Downloading (green spinner + "Downloading model... XX%"), Error (yellow dot + message). Returns null for Idle.
+- `src/App.tsx`: Updated to render Overlay component using useDictationState hook
+- Files changed: 5 (4 new files + App.tsx modified)
+- **Learnings for future iterations:**
+  - Tauri events payload structure: `event.payload.state` — the `StatePayload` wrapper contains the `DictationState` object
+  - `@tauri-apps/api/event` `listen()` returns a Promise<UnlistenFn> — cleanup in useEffect needs `.then(fn => fn())`
+  - TypeScript strict mode with `noUnusedLocals` and `noUnusedParameters` — all imports and params must be used
+  - Overlay returns null for Idle since the window is hidden by the Rust backend anyway — no need to render anything
+---
+
+## 2026-02-14 - US-010
+- Made overlay window non-activating on macOS so it doesn't steal keyboard focus from the active app
+- Added `make_window_non_activating()` function to lib.rs using cocoa crate (cfg-gated for macOS)
+- Sets NSWindowCollectionBehavior: CanJoinAllSpaces | Stationary | IgnoresCycle
+- Sets window level to NSFloatingWindowLevel (3)
+- Called in setup closure after global shortcut registration, before model download thread spawn
+- Files changed: 1 (lib.rs modified — added ~20 lines)
+- **Learnings for future iterations:**
+  - Tauri v2 `WebviewWindow::ns_window()` returns `*mut c_void` — cast to `cocoa::base::id` to use NSWindow trait methods from cocoa crate
+  - NSFloatingWindowLevel is not exported as a named constant in cocoa 0.26 — use raw value `3`
+  - cocoa 0.26 APIs show deprecation warnings recommending objc2-app-kit, but function correctly
+  - `#[cfg(target_os = "macos")]` needed both on the function definition AND the call site to avoid compile errors on other platforms
+---
+
+## 2026-02-14 - US-011
+- Added permission checking with user-friendly error messages for Accessibility and Microphone permissions
+- On startup (setup closure): checks `check_accessibility_permission()`, emits Error state with guidance message if denied, shows overlay
+- Before recording (toggle_recording Idle→Recording): re-checks accessibility permission, returns early with Error state if denied
+- AudioCapture failures (`new()` and `start_recording()`): now emit Error state with microphone permission message instead of only logging
+- Error state shows in overlay; next hotkey press resets Error→Idle (already existed from US-007)
+- NSMicrophoneUsageDescription already configured in Info.plist from US-001
+- Files changed: 1 (lib.rs modified — added ~55 lines)
+- **Learnings for future iterations:**
+  - Permission checks should happen at two layers: startup (for user awareness) and before action (for runtime re-check after user grants permission)
+  - `check_accessibility_permission()` is not cfg-gated — it returns `true` on non-macOS so it's safe to call unconditionally in lib.rs
+  - AudioCapture failures (cpal errors) are a reasonable proxy for missing microphone permission — macOS doesn't have a direct "check microphone permission" API without AVFoundation
+  - Error state display relies on the overlay being shown — must call `window.show()` when emitting Error state
+---
+
+## 2026-02-14 - US-012
+- Added configurable hotkey with persistence to config.json
+- `config.rs`: New module with `AppConfig` struct (hotkey field), `load_config()` reads from `~/Library/Application Support/com.dictate.app/config.json` (defaults to "alt+space"), `save_config()` writes to disk
+- `lib.rs`: Added `CurrentHotkey` newtype wrapper for managed state, `get_hotkey` Tauri command returns current hotkey, `set_hotkey` Tauri command unregisters old shortcut + registers new one + saves config (with rollback on failure)
+- Startup now reads saved hotkey from config instead of hardcoding "alt+space"
+- Registered both commands via `.invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey])`
+- Files changed: 2 (1 new config.rs + lib.rs modified — added ~60 lines)
+- **Learnings for future iterations:**
+  - `tauri_plugin_global_shortcut::GlobalShortcutExt` trait provides runtime shortcut management: `app.global_shortcut().unregister()` / `.on_shortcut()` / `.is_registered()`
+  - Global shortcut API methods accept `&str` not `&String` — use `.as_str()` when passing String references
+  - `set_hotkey` implements rollback: if new shortcut registration fails, re-registers the old one
+  - Tauri commands returning `Result<T, String>` auto-serialize — use `.map_err(|e| format!(...))` for error conversion
+  - `setup` closure needs `move` keyword when capturing variables (like the hotkey string) from outside scope
+---
+
+## 2026-02-14 - US-013
+- Added hotkey settings UI accessible via gear icon in the overlay
+- `src/components/Settings.tsx`: Settings panel component — fetches current hotkey via `get_hotkey` Tauri command on mount, text input for new hotkey, save button calls `set_hotkey` command, shows success/error feedback
+- `src/components/Overlay.tsx`: Updated to include gear icon button (SVG) visible in all non-Idle states, toggles settings panel visibility. Settings panel renders below the main overlay pill. Also keeps rendering if settings is open even when Idle.
+- No changes to App.tsx needed — Overlay manages settings state internally via useState
+- No capabilities/default.json changes needed — `core:default` covers custom Tauri invoke commands
+- Files changed: 2 (1 new Settings.tsx + Overlay.tsx modified)
+- **Learnings for future iterations:**
+  - `@tauri-apps/api/core` `invoke<T>(command, args?)` for calling Tauri commands — args must match Rust parameter names (camelCase maps to snake_case automatically)
+  - Tauri v2 `core:default` capability covers custom invoke commands — no additional permission entries needed in capabilities/default.json
+  - Overlay window is 280x120 — settings panel must be compact; w-64 (256px) fits within the window width
+  - The overlay returns null for Idle state unless settings is open — need to check both conditions to keep settings accessible
+---

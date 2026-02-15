@@ -23,8 +23,8 @@
         "Typecheck passes (both `cargo check` in src-tauri and `npx tsc --noEmit`)"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Tauri v2 uses separate Info.plist file for NSMicrophoneUsageDescription instead of infoPlist in tauri.conf.json. Required cmake install for whisper-rs compilation. vite ^7.0.0 was scaffolded but PRD specified ^6.0.0 - using what npm resolved."
     },
     {
       "id": "US-002",
@@ -41,8 +41,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cpal 0.17 SampleRate is a u32 type alias (not a tuple struct), so use config.sample_rate() directly without .0 accessor."
     },
     {
       "id": "US-003",
@@ -61,8 +61,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ModelInfo uses static str references for zero-cost model catalog. download_model uses reqwest bytes_stream with futures-util StreamExt for chunked download with progress."
     },
     {
       "id": "US-004",
@@ -79,8 +79,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "whisper-rs 0.15: WhisperContext::new_with_params() with default params, create_state() for WhisperState, FullParams::new(Greedy{best_of:1}), state.full(params, audio) then state.as_iter() with to_str_lossy() for segments. Uses std::sync::mpsc channels for thread communication."
     },
     {
       "id": "US-005",
@@ -95,8 +95,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "enigo 0.6: Enigo::new(&Settings::default()), key(Key::Meta, Direction::Press/Release), key(Key::Unicode('v'), Direction::Click). arboard 3.6: Clipboard::new(), set_text(). AXIsProcessTrusted via extern C for accessibility check."
     },
     {
       "id": "US-006",
@@ -111,8 +111,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DictationState uses serde tag='type' for discriminated union serialization. SharedState uses parking_lot::Mutex (not std::sync::Mutex) for ergonomic locking without .unwrap()."
     },
     {
       "id": "US-007",
@@ -129,8 +129,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Global shortcut registered via tauri_plugin_global_shortcut::Builder inside setup closure. SharedState, TranscriptionSender, TranscriptionReceiver, and ActiveCapture all stored as Tauri managed state. toggle_recording handles all DictationState transitions. US-008 will wire up the actual transcription pipeline."
     },
     {
       "id": "US-008",
@@ -147,8 +147,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Model setup runs in a background std::thread from setup closure. Download uses a tokio Runtime::new().block_on() for async reqwest download. Transcription result handling spawns a std::thread that blocks on mpsc recv() then pastes text or sets error state. Empty transcription results silently return to Idle without pasting."
     },
     {
       "id": "US-009",
@@ -164,8 +164,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DictationState discriminated union uses 'type' field matching Rust serde(tag=\"type\"). Overlay returns null for Idle state (window is hidden by backend anyway). useDictationState hook listens to 'dictation-state' Tauri event via @tauri-apps/api/event listen()."
     },
     {
       "id": "US-010",
@@ -180,8 +180,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cocoa 0.26 APIs are deprecated (recommends objc2-app-kit) but work correctly. NSFloatingWindowLevel = 3 as raw integer. Tauri WebviewWindow::ns_window() returns *mut c_void that casts to cocoa id type."
     },
     {
       "id": "US-011",
@@ -196,8 +196,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Accessibility check runs both on startup (setup closure) and before each recording attempt. AudioCapture failures (new() or start_recording()) emit user-friendly microphone permission error. Error state shows in overlay; next hotkey press resets to Idle for retry."
     },
     {
       "id": "US-012",
@@ -213,8 +213,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Config stored at ~/Library/Application Support/com.dictate.app/config.json. GlobalShortcutExt trait provides runtime unregister/on_shortcut methods. Shortcut API requires &str not &String. set_hotkey re-registers old shortcut on failure for rollback safety."
     },
     {
       "id": "US-013",
@@ -232,8 +232,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Settings panel integrated into Overlay component with gear icon. Uses @tauri-apps/api/core invoke() to call get_hotkey/set_hotkey commands. No additional capabilities needed — core:default covers custom invoke commands. Input field for new hotkey string with save button, success/error feedback."
     }
   ]
 }
