@@ -1,0 +1,25 @@
+## Codebase Patterns
+- Tauri v2 uses separate `src-tauri/Info.plist` for custom Info.plist keys (like NSMicrophoneUsageDescription) - it merges with generated values. Don't use `infoPlist` map in tauri.conf.json.
+- Tauri v2 entitlements go in `bundle.macOS.entitlements` as a path string (e.g., `"./entitlements.plist"`)
+- `cmake` is required for building whisper-rs (compiles whisper.cpp from source)
+- Rust lib name is `dictate_lib` (in Cargo.toml [lib] section), referenced in main.rs as `dictate_lib::run()`
+- TypeScript check: `npx tsc --noEmit`, Rust check: `cargo check` in `src-tauri/`
+---
+
+## 2026-02-14 - US-001
+- Scaffolded Tauri v2 + React + TypeScript project using `npm create tauri-app@latest`
+- Configured tauri.conf.json: productName "Dictate", identifier "com.dictate.app", macOSPrivateApi true, overlay window (280x120, transparent, alwaysOnTop, no decorations, hidden by default)
+- Created entitlements.plist (no sandbox, audio-input) and Info.plist (NSMicrophoneUsageDescription)
+- Configured capabilities/default.json with core, window, and global-shortcut permissions
+- Set up Cargo.toml with all required dependencies including whisper-rs (metal), cpal, arboard, enigo, tauri-plugin-global-shortcut, reqwest, etc.
+- Set up package.json with React 19, Tauri API, plugin-global-shortcut, Tailwind CSS 3, Vite, TypeScript
+- Created globals.css with transparent body for overlay, tailwind.config.js, postcss.config.js
+- Minimal lib.rs (just runs Tauri builder) and main.rs entry point
+- Files changed: 39 new files (scaffold + config + dependencies)
+- **Learnings for future iterations:**
+  - `npm create tauri-app@latest` scaffolds into a subdirectory, need to copy files out
+  - Tauri v2 does NOT support `infoPlist` as a map in tauri.conf.json bundle config - use separate Info.plist file
+  - `cmake` must be installed for whisper-rs to compile (uses cmake crate internally)
+  - The Tauri scaffold generates `tauri-plugin-opener` by default - we replaced it with our own dependencies
+  - Cargo.lock should be committed for reproducible builds
+---

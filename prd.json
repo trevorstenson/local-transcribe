@@ -23,8 +23,8 @@
         "Typecheck passes (both `cargo check` in src-tauri and `npx tsc --noEmit`)"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Tauri v2 uses separate Info.plist file for NSMicrophoneUsageDescription instead of infoPlist in tauri.conf.json. Required cmake install for whisper-rs compilation. vite ^7.0.0 was scaffolded but PRD specified ^6.0.0 - using what npm resolved."
     },
     {
       "id": "US-002",
