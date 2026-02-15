@@ -27,6 +27,8 @@ pub struct AppConfig {
     pub overlay_y: Option<f64>,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_true")]
+    pub vocab_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -42,6 +44,7 @@ impl Default for AppConfig {
             overlay_x: None,
             overlay_y: None,
             language: default_language(),
+            vocab_enabled: true,
         }
     }
 }

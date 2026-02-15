@@ -687,6 +687,31 @@ fn set_smart_paste(
 }
 
 #[tauri::command]
+fn get_vocab_enabled(shared_state: tauri::State<'_, SharedState>) -> bool {
+    shared_state.lock().vocab_enabled
+}
+
+#[tauri::command]
+fn set_vocab_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    // Update in-memory state
+    {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.vocab_enabled = enabled;
+    }
+
+    // Persist to config
+    let mut cfg = config::load_config();
+    cfg.vocab_enabled = enabled;
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_language(shared_state: tauri::State<'_, SharedState>) -> String {
     shared_state.lock().language.clone()
 }
@@ -883,6 +908,7 @@ pub fn run() {
     let hotkey = app_config.hotkey.clone();
     let selected_model = app_config.selected_model.clone();
     let smart_paste = app_config.smart_paste;
+    let vocab_enabled = app_config.vocab_enabled;
     let language = app_config.language.clone();
 
     // Create shared state with persisted settings
@@ -892,6 +918,7 @@ pub fn run() {
         selected_model,
         smart_paste,
         language: language.clone(),
+        vocab_enabled,
     }));
 
     // Spawn transcription thread
@@ -909,7 +936,7 @@ pub fn run() {
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, get_language, set_language, save_overlay_position, cancel_recording, get_history, delete_history_entry, clear_history, copy_history_entry])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, get_vocab_enabled, set_vocab_enabled, get_language, set_language, save_overlay_position, cancel_recording, get_history, delete_history_entry, clear_history, copy_history_entry])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(

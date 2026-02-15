@@ -27,6 +27,7 @@ pub struct AppState {
     pub selected_model: String,
     pub smart_paste: bool,
     pub language: String,
+    pub vocab_enabled: bool,
 }
 
 impl Default for AppState {
@@ -37,6 +38,7 @@ impl Default for AppState {
             selected_model: String::from("base.en"),
             smart_paste: true,
             language: String::from("en"),
+            vocab_enabled: true,
         }
     }
 }

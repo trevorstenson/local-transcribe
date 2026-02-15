@@ -1,239 +1,155 @@
 {
   "project": "Dictate",
-  "branchName": "ralph/dictate-local-whisper",
-  "description": "Dictate — Free local voice-to-text dictation app for macOS using Tauri v2 + Rust + React with whisper.cpp (Metal GPU acceleration)",
+  "branchName": "ralph/personal-vocabulary",
+  "description": "Personal Vocabulary — local correction layer between Whisper transcription output and paste, with whole-word matching, case preservation, correction preview in overlay, and undo hotkey",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Scaffold Tauri v2 project with React TypeScript",
-      "description": "As a developer, I need the project scaffolded with Tauri v2 + React + TypeScript so that all subsequent features have a working foundation.",
+      "title": "Create vocabulary storage module",
+      "description": "As a developer, I need a Rust module to load, save, and query vocabulary entries from a local JSON file so the correction layer has persistent storage.",
       "acceptanceCriteria": [
-        "Run `npm create tauri-app@latest . -- --template react-ts` to generate project (or manually create equivalent structure if command fails)",
-        "src-tauri/tauri.conf.json configured: productName 'Dictate', identifier 'com.dictate.app', macOSPrivateApi true, single window with label 'overlay' (280x120, y:80, resizable:false, decorations:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, visible:false, focus:false, shadow:false)",
-        "src-tauri/entitlements.plist created: com.apple.security.app-sandbox=false, com.apple.security.device.audio-input=true",
-        "src-tauri/capabilities/default.json created with permissions: core:default, core:window:allow-show, core:window:allow-hide, core:window:allow-set-focus, core:window:allow-set-position, global-shortcut:allow-register, global-shortcut:allow-unregister, global-shortcut:allow-is-registered",
-        "src/styles/globals.css has transparent body: html/body/#root with background:transparent, overflow:hidden, user-select:none",
-        "Cargo.toml includes all dependencies: tauri 2.10 with macos-private-api feature, tauri-plugin-global-shortcut 2.3, whisper-rs 0.15 with metal feature, cpal 0.17, arboard 3.6, enigo 0.6, tokio 1 with macros+rt-multi-thread+sync+time, serde 1 with derive, serde_json 1, anyhow 1, log 0.4, env_logger 0.11, reqwest 0.12 with stream+rustls-tls, futures-util 0.3, dirs 6, parking_lot 0.12, cocoa 0.26 and objc 0.2 as macos-only deps, tauri-build 2.0 as build dep",
-        "package.json includes: @tauri-apps/api ^2.2.0, @tauri-apps/plugin-global-shortcut ^2.2.0, react ^19.0.0, react-dom ^19.0.0, @tauri-apps/cli ^2.2.0, @vitejs/plugin-react ^4.3.0, tailwindcss ^3.4.0, typescript ^5.6.0, vite ^6.0.0, postcss, autoprefixer",
-        "tailwind.config.js and postcss.config.js configured for React+Tailwind",
-        "src-tauri/src/main.rs exists with entry point calling lib::run()",
-        "src-tauri/src/lib.rs exists with minimal Tauri setup (empty run function that builds and runs the app)",
-        "index.html references the React entry point",
-        "Bundle config in tauri.conf.json includes macOS entitlements path and NSMicrophoneUsageDescription in infoPlist",
-        "Typecheck passes (both `cargo check` in src-tauri and `npx tsc --noEmit`)"
+        "Create src-tauri/src/vocabulary.rs with VocabEntry struct: id (u64), phrase (String), replacement (String), enabled (bool, default true). Derive Debug, Clone, Serialize, Deserialize",
+        "Create Vocabulary struct wrapping Vec<VocabEntry> with Serialize, Deserialize, Default derives",
+        "Add vocabulary_path() function returning ~/.local/share/com.dictate.app/vocabulary.json (using dirs::data_dir(), same pattern as config_path() in config.rs and history_path() in history.rs)",
+        "Add load_vocabulary() -> Vocabulary that reads from disk, returns Vocabulary::default() if file missing or corrupt (same pattern as load_config() in config.rs)",
+        "Add save_vocabulary(vocabulary: &Vocabulary) -> Result<()> that writes to disk, creating directory if needed (same pattern as save_config() in config.rs)",
+        "Add add_entry(entry: VocabEntry) -> Result<()> that loads, pushes entry, saves",
+        "Add update_entry(id: u64, phrase: String, replacement: String, enabled: bool) -> Result<()> that loads, finds by id, updates fields, saves",
+        "Add delete_entry(id: u64) -> Result<()> that loads, retains entries where id != target, saves",
+        "Add mod vocabulary; to lib.rs",
+        "Typecheck passes (cargo check in src-tauri)"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Tauri v2 uses separate Info.plist file for NSMicrophoneUsageDescription instead of infoPlist in tauri.conf.json. Required cmake install for whisper-rs compilation. vite ^7.0.0 was scaffolded but PRD specified ^6.0.0 - using what npm resolved."
+      "notes": ""
     },
     {
       "id": "US-002",
-      "title": "Create audio capture module with resampler",
-      "description": "As a developer, I need an AudioCapture struct that records from the default microphone and resamples to 16kHz mono f32 for Whisper input.",
+      "title": "Implement text correction engine with tests",
+      "description": "As a developer, I need a function that applies vocabulary replacements to text using whole-word boundary matching and case preservation, so Whisper's recurring mistakes are fixed automatically.",
       "acceptanceCriteria": [
-        "Create src-tauri/src/audio/mod.rs that re-exports capture and resampler modules",
-        "Create src-tauri/src/audio/resampler.rs with `pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32>` using linear interpolation. Returns input unchanged if rates match or input is empty",
-        "Create src-tauri/src/audio/capture.rs with `AudioCapture` struct containing: stream (Option<Stream>), buffer (Arc<Mutex<Vec<f32>>>), device_sample_rate (u32)",
-        "AudioCapture::new() gets default input device and config from cpal, stores device_sample_rate",
-        "AudioCapture::start_recording() builds cpal input stream for F32 or I16 sample formats, converts multi-channel to mono by averaging, appends to buffer. Clears buffer before starting",
-        "AudioCapture::stop_recording() drops the stream, takes the buffer, and returns resampled audio via resampler::resample(buffer, device_sample_rate, 16000)",
-        "Add `mod audio;` to lib.rs",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "Add regex = \"1\" to [dependencies] in src-tauri/Cargo.toml",
+        "Add to vocabulary.rs: CorrectionApplied struct with fields: original (String), replacement (String), position (usize)",
+        "Add to vocabulary.rs: CorrectionResult struct with fields: text (String), corrections (Vec<CorrectionApplied>). Both structs derive Debug, Clone, Serialize, Deserialize",
+        "Add pub fn apply_corrections(text: &str, vocabulary: &Vocabulary) -> CorrectionResult that iterates enabled entries, builds regex with \\b word boundaries for each phrase, replaces all matches",
+        "Case-preserving replacement: if matched text is all uppercase, replacement is uppercased; if first char is uppercase (Title Case), replacement first char is uppercased; otherwise replacement used as-is",
+        "Return CorrectionResult with corrected text and list of all CorrectionApplied entries (one per match, not per vocab entry)",
+        "If vocabulary is empty or no entries are enabled or no matches found, return original text with empty corrections vec",
+        "Add #[cfg(test)] mod tests with tests: basic single replacement, word boundary safety (\"app\" does not match inside \"application\"), case preservation (lowercase, Title Case, ALL CAPS), multiple replacements in one text, disabled entries are skipped, empty vocabulary returns original text unchanged",
+        "Typecheck passes (cargo check in src-tauri)",
+        "Tests pass (cargo test in src-tauri)"
       ],
       "priority": 2,
       "passes": true,
-      "notes": "cpal 0.17 SampleRate is a u32 type alias (not a tuple struct), so use config.sample_rate() directly without .0 accessor."
+      "notes": ""
     },
     {
       "id": "US-003",
-      "title": "Create Whisper model manager with HuggingFace download",
-      "description": "As a developer, I need a model manager that catalogs available Whisper models, checks if they're cached, and downloads them from HuggingFace.",
+      "title": "Add vocab_enabled config field and Tauri commands",
+      "description": "As a developer, I need a vocab_enabled flag in AppConfig and corresponding Tauri commands so the frontend can toggle Personal Vocabulary on/off.",
       "acceptanceCriteria": [
-        "Create src-tauri/src/transcription/mod.rs that re-exports model_manager and whisper modules",
-        "Create src-tauri/src/transcription/model_manager.rs with ModelInfo struct (name, filename, size_mb, description) and AVAILABLE_MODELS const array with 5 models: tiny.en (78MB), base.en (148MB), small.en (488MB), medium.en (1530MB), base.en-q8_0 (82MB)",
-        "HF_BASE_URL const set to 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main'",
-        "models_dir() returns ~/Library/Application Support/com.dictate.app/models/ (using dirs::data_dir())",
-        "model_exists(model_name) checks if the model file exists on disk",
-        "model_path(model_name) returns Option<PathBuf> for the model file path",
-        "async fn download_model(model_name, progress_callback) streams download from HuggingFace using reqwest bytes_stream, calls progress_callback(downloaded, total) on each chunk, writes to file, returns path",
-        "download_model creates the models directory if it doesn't exist",
-        "Add `mod transcription;` to lib.rs",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "Add vocab_enabled: bool field to AppConfig in config.rs with #[serde(default = \"default_true\")] so it defaults to true",
+        "Add vocab_enabled: bool field to AppState in state.rs with default true",
+        "In lib.rs setup: read vocab_enabled from config and set it on AppState (same pattern as smart_paste initialization)",
+        "Add #[tauri::command] fn get_vocab_enabled(shared_state: State<SharedState>) -> bool that reads from shared state",
+        "Add #[tauri::command] fn set_vocab_enabled(app: AppHandle, enabled: bool) -> Result<(), String> that updates shared state and saves to config (same pattern as set_smart_paste)",
+        "Register both commands in invoke_handler generate_handler! macro",
+        "Typecheck passes (cargo check in src-tauri)"
       ],
       "priority": 3,
       "passes": true,
-      "notes": "ModelInfo uses static str references for zero-cost model catalog. download_model uses reqwest bytes_stream with futures-util StreamExt for chunked download with progress."
+      "notes": ""
     },
     {
       "id": "US-004",
-      "title": "Create transcription engine with dedicated thread",
-      "description": "As a developer, I need a Whisper transcription service on a dedicated thread with channel-based API, since WhisperState is not Send/Sync.",
+      "title": "Add Tauri CRUD commands for vocabulary management",
+      "description": "As a developer, I need Tauri commands for vocabulary CRUD operations so the frontend can manage vocabulary entries.",
       "acceptanceCriteria": [
-        "Create src-tauri/src/transcription/whisper.rs with internal TranscriptionService struct that owns Option<WhisperContext>",
-        "TranscriptionService::load_model(path) creates WhisperContext with default params",
-        "TranscriptionService::transcribe(audio_data) creates WhisperState, configures FullParams with Greedy sampling (best_of:1), 4 threads, English language, no_context:true, single_segment:false, suppress_blank:true, suppress_nst:true, no timestamps, no progress printing. Runs full() and collects segment text",
-        "Define TranscriptionRequest enum: LoadModel(String), Transcribe(Vec<f32>), Shutdown",
-        "Define TranscriptionResponse enum: ModelLoaded(Result<(), String>), TranscriptionComplete(Result<String, String>)",
-        "pub fn spawn_transcription_thread() returns (mpsc::Sender<TranscriptionRequest>, mpsc::Receiver<TranscriptionResponse>). Spawns std::thread that loops on req_rx.recv(), handles LoadModel/Transcribe/Shutdown",
-        "Update transcription/mod.rs to re-export whisper module",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "Add #[tauri::command] fn get_vocabulary() -> Vec<VocabEntry> that calls vocabulary::load_vocabulary() and returns entries",
+        "Add #[tauri::command] fn add_vocab_entry(phrase: String, replacement: String) -> Result<(), String> that creates VocabEntry with id = current timestamp_ms (same pattern as HistoryEntry id), enabled = true, and calls vocabulary::add_entry()",
+        "Add #[tauri::command] fn update_vocab_entry(id: u64, phrase: String, replacement: String, enabled: bool) -> Result<(), String> that calls vocabulary::update_entry()",
+        "Add #[tauri::command] fn delete_vocab_entry(id: u64) -> Result<(), String> that calls vocabulary::delete_entry()",
+        "Register all four commands in invoke_handler generate_handler! macro",
+        "Typecheck passes (cargo check in src-tauri)"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "whisper-rs 0.15: WhisperContext::new_with_params() with default params, create_state() for WhisperState, FullParams::new(Greedy{best_of:1}), state.full(params, audio) then state.as_iter() with to_str_lossy() for segments. Uses std::sync::mpsc channels for thread communication."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-005",
-      "title": "Create text paste module with accessibility check",
-      "description": "As a developer, I need a paste module that writes text to clipboard and simulates Cmd+V, plus checks for macOS Accessibility permission.",
+      "title": "Add Personal Vocabulary toggle to Settings UI",
+      "description": "As a user, I want a toggle in Settings to turn Personal Vocabulary on or off globally, so I can quickly disable it without deleting my entries.",
       "acceptanceCriteria": [
-        "Create src-tauri/src/input/mod.rs that re-exports paste module",
-        "Create src-tauri/src/input/paste.rs with pub fn paste_text(text: &str) -> anyhow::Result<()>",
-        "paste_text writes text to clipboard via arboard::Clipboard, sleeps 50ms, then simulates Cmd+V via enigo: Meta press, Unicode('v') click, Meta release",
-        "pub fn check_accessibility_permission() -> bool that calls AXIsProcessTrusted() via extern C on macOS, returns true on other platforms",
-        "Add `mod input;` to lib.rs",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "In ModelSettings.tsx: add vocabEnabled state (useState<boolean>(true))",
+        "On mount (useEffect): call invoke<boolean>('get_vocab_enabled').then(setVocabEnabled)",
+        "Add handleToggleVocab async function that calls invoke('set_vocab_enabled', { enabled: !vocabEnabled }) and updates local state (same pattern as handleToggleSmartPaste)",
+        "Add toggle button in the settings footer section (mt-4 pt-4 border-t area) below the Launch at Login toggle, following the exact same layout pattern",
+        "Toggle label: 'Personal Vocabulary' with subtitle: vocabEnabled ? 'Corrects transcriptions using your custom dictionary' : 'Vocabulary corrections are disabled'",
+        "Toggle uses same blue/gray pill styling as Smart Paste and Launch at Login toggles",
+        "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "enigo 0.6: Enigo::new(&Settings::default()), key(Key::Meta, Direction::Press/Release), key(Key::Unicode('v'), Direction::Click). arboard 3.6: Clipboard::new(), set_text(). AXIsProcessTrusted via extern C for accessibility check."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-006",
-      "title": "Create state types and shared state",
-      "description": "As a developer, I need the DictationState enum and SharedState type that all modules will reference.",
+      "title": "Add Manage Vocabulary modal in Settings",
+      "description": "As a user, I want to add, edit, and delete vocabulary entries from a modal in Settings so I can build my personal dictionary.",
       "acceptanceCriteria": [
-        "Create src-tauri/src/state.rs with DictationState enum (serde tagged): Idle, Recording { duration_ms: u64 }, Processing, Downloading { progress: f32 }, Error { message: String }",
-        "Create StatePayload struct with state: DictationState field (Serialize, Deserialize)",
-        "Create AppState struct with dictation_state: DictationState, model_path: Option<String>, selected_model: String (default 'base.en')",
-        "Define SharedState type alias as Arc<Mutex<AppState>> using parking_lot::Mutex",
-        "Add `mod state;` to lib.rs",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "Create src/components/VocabularyModal.tsx component that takes visible: boolean and onClose: () => void props",
+        "If !visible, return null (same pattern as Settings.tsx)",
+        "On mount when visible: call invoke<VocabEntry[]>('get_vocabulary') to load entries",
+        "Display scrollable list of entries, each showing phrase, arrow, replacement, enabled toggle, and delete (X) button",
+        "Add form at top: two text inputs (phrase, replacement) and an 'Add' button. On submit call invoke('add_vocab_entry', { phrase, replacement }) then reload list",
+        "Delete button calls invoke('delete_vocab_entry', { id }) then reloads list",
+        "Per-entry enabled toggle calls invoke('update_vocab_entry', { id, phrase, replacement, enabled: !entry.enabled }) then reloads list",
+        "Empty state: show 'No vocabulary entries yet. Add your first correction above.' message",
+        "Style with dark glass-morphism matching existing UI: bg-black/90 backdrop-blur-xl rounded-2xl border border-white/10, max-h-[400px] overflow-y-auto for list",
+        "In ModelSettings.tsx: add 'Manage Vocabulary' button below the Personal Vocabulary toggle (only shown when vocabEnabled is true). Add showVocabModal state. Render <VocabularyModal visible={showVocabModal} onClose={() => setShowVocabModal(false)} />",
+        "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "DictationState uses serde tag='type' for discriminated union serialization. SharedState uses parking_lot::Mutex (not std::sync::Mutex) for ergonomic locking without .unwrap()."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-007",
-      "title": "Wire up Tauri app with global shortcut and state events",
-      "description": "As a developer, I need lib.rs to register the global shortcut and emit state change events to the frontend, with basic Idle/Recording toggling.",
+      "title": "Wire corrections into transcription pipeline with preview state",
+      "description": "As a developer, I need to apply vocabulary corrections after transcription and emit a CorrectionPreview state so the overlay can show what changed before pasting.",
       "acceptanceCriteria": [
-        "lib.rs run() function creates SharedState, spawns transcription thread, stores both as Tauri managed state",
-        "Register tauri-plugin-global-shortcut plugin",
-        "Register Alt+Space (Option+Space) global shortcut in setup closure",
-        "Shortcut handler calls toggle_recording function",
-        "toggle_recording matches on current DictationState: Idle starts AudioCapture and sets Recording, Recording stops capture. Processing/Downloading states are ignored. Error resets to Idle",
-        "Helper function emit_state(app_handle, state) emits 'dictation-state' event with StatePayload to frontend",
-        "When entering Recording: show overlay window (without focus). When returning to Idle: hide overlay window",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "Add CorrectionPreview variant to DictationState enum in state.rs: CorrectionPreview { text: String, original_text: String, corrections: Vec<CorrectionApplied> } where CorrectionApplied is imported from vocabulary module. Add serde skip_serializing_if for empty corrections vec",
+        "Add pending_original_text: Option<String> and pending_corrected_text: Option<String> fields to AppState in state.rs (default None)",
+        "In lib.rs transcription complete handler (after let trimmed = text.trim().to_string() and before history::add_entry): check if vocab_enabled in shared state, if so call vocabulary::load_vocabulary() then vocabulary::apply_corrections(&trimmed, &vocab)",
+        "If corrections.is_empty(): continue with existing flow (save history with trimmed text, paste immediately)",
+        "If corrections NOT empty: save history with corrected text, store original and corrected text in AppState pending fields, emit CorrectionPreview state with text/original_text/corrections, do NOT paste yet, do NOT hide overlay",
+        "Add #[tauri::command] fn accept_corrections(app: AppHandle, shared_state: State<SharedState>) -> Result<(), String>: read pending_corrected_text from state, call paste_text with it, clear pending fields, set Idle, hide overlay",
+        "Add #[tauri::command] fn undo_corrections(app: AppHandle, shared_state: State<SharedState>) -> Result<(), String>: read pending_original_text from state, call paste_text with it, update the most recent history entry text to original_text, clear pending fields, set Idle, hide overlay",
+        "Register accept_corrections and undo_corrections in invoke_handler",
+        "Typecheck passes (cargo check in src-tauri)"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "Global shortcut registered via tauri_plugin_global_shortcut::Builder inside setup closure. SharedState, TranscriptionSender, TranscriptionReceiver, and ActiveCapture all stored as Tauri managed state. toggle_recording handles all DictationState transitions. US-008 will wire up the actual transcription pipeline."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-008",
-      "title": "Add model download on startup and transcription flow",
-      "description": "As a developer, I need the app to download the Whisper model on first run and complete the full recording→transcription→paste pipeline.",
+      "title": "Add correction preview UI in overlay with auto-dismiss and undo",
+      "description": "As a user, I want to see which words were corrected in the overlay before paste, with auto-dismiss after 3 seconds and Escape to undo.",
       "acceptanceCriteria": [
-        "In lib.rs setup: check if base.en model exists via model_manager::model_exists(). If not, emit Downloading state and call download_model with progress callback that emits Downloading { progress } events. Then send LoadModel request to transcription thread and wait for ModelLoaded response",
-        "If model already exists, send LoadModel request directly on startup",
-        "Store model_path in SharedState after successful load",
-        "In toggle_recording Recording→Processing transition: send Transcribe(audio_data) to transcription thread, set state to Processing, spawn a std::thread that waits for TranscriptionComplete response",
-        "On successful transcription: call input::paste::paste_text(text), set state to Idle, hide overlay",
-        "On transcription error: set state to Error with message, keep overlay visible",
-        "On empty transcription result (silent audio): set state to Idle, hide overlay (don't paste empty string)",
-        "Typecheck passes (`cargo check` in src-tauri)"
+        "Add CorrectionPreview type to DictationState union in src/types.ts: { type: 'CorrectionPreview'; text: string; original_text: string; corrections: Array<{ original: string; replacement: string; position: number }> }",
+        "In Overlay.tsx: add rendering for CorrectionPreview state showing a compact list of corrections as 'original -> replacement' items (green text for replacement, strikethrough for original), max 5 items shown with '+N more' if exceeded",
+        "Add auto-dismiss: when CorrectionPreview state is entered, start a 3-second setTimeout that calls invoke('accept_corrections'). Clear timeout on unmount or state change",
+        "Add a thin progress bar or countdown indicator showing remaining time before auto-paste",
+        "Add keydown event listener (document.addEventListener) when in CorrectionPreview: Escape key calls invoke('undo_corrections'), Enter key calls invoke('accept_corrections'). Remove listener on cleanup",
+        "Show small hint text at bottom: 'Enter to accept · Esc to undo'",
+        "Overlay should NOT return null for CorrectionPreview state (it must remain visible during preview)",
+        "Typecheck passes (npx tsc --noEmit)"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "Model setup runs in a background std::thread from setup closure. Download uses a tokio Runtime::new().block_on() for async reqwest download. Transcription result handling spawns a std::thread that blocks on mpsc recv() then pastes text or sets error state. Empty transcription results silently return to Idle without pasting."
-    },
-    {
-      "id": "US-009",
-      "title": "Build overlay React components",
-      "description": "As a user, I want a minimal floating overlay showing recording, processing, downloading, and error states.",
-      "acceptanceCriteria": [
-        "Create src/types.ts with DictationState TypeScript type matching Rust enum: Idle | Recording (duration_ms) | Processing | Downloading (progress) | Error (message)",
-        "Create src/hooks/useDictationState.ts that listens to 'dictation-state' Tauri events via @tauri-apps/api/event listen(), returns current DictationState, defaults to Idle",
-        "Create src/components/PulseAnimation.tsx: relative container with red dot + animate-ping overlay",
-        "Create src/components/Overlay.tsx: dark frosted-glass pill (bg-black/80 backdrop-blur-xl rounded-2xl border-white/10). Shows: Recording = PulseAnimation + 'Listening...' (red), Processing = spinning border + 'Transcribing...' (blue), Downloading = spinner + 'Downloading model... XX%' (green), Error = yellow dot + message. Returns null for Idle",
-        "Update src/App.tsx to render Overlay component with centered layout",
-        "Typecheck passes (`npx tsc --noEmit`)",
-        "Verify in browser using dev-browser skill"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": "DictationState discriminated union uses 'type' field matching Rust serde(tag=\"type\"). Overlay returns null for Idle state (window is hidden by backend anyway). useDictationState hook listens to 'dictation-state' Tauri event via @tauri-apps/api/event listen()."
-    },
-    {
-      "id": "US-010",
-      "title": "Make overlay window non-activating on macOS",
-      "description": "As a user, I need the overlay to appear without stealing keyboard focus from my current app.",
-      "acceptanceCriteria": [
-        "Add make_window_non_activating(window: &tauri::WebviewWindow) function to lib.rs using cocoa crate",
-        "Set NSWindow collection behavior: NSWindowCollectionBehaviorCanJoinAllSpaces | Stationary | IgnoresCycle",
-        "Set window level to NSFloatingWindowLevel",
-        "Call make_window_non_activating on the overlay window during Tauri setup",
-        "Function is cfg(target_os = macos) gated",
-        "Typecheck passes (`cargo check` in src-tauri)"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": "cocoa 0.26 APIs are deprecated (recommends objc2-app-kit) but work correctly. NSFloatingWindowLevel = 3 as raw integer. Tauri WebviewWindow::ns_window() returns *mut c_void that casts to cocoa id type."
-    },
-    {
-      "id": "US-011",
-      "title": "Add permission checking with user-friendly errors",
-      "description": "As a user, I want clear guidance when the app needs macOS permissions so I'm not confused by silent failures.",
-      "acceptanceCriteria": [
-        "On startup in lib.rs, check Accessibility permission via check_accessibility_permission(). If denied, emit Error state with message: 'Accessibility access needed — check System Settings > Privacy > Accessibility'",
-        "Before starting recording in toggle_recording, re-check accessibility permission. If denied, emit Error state instead of starting recording",
-        "If AudioCapture::start_recording() fails (likely microphone permission), emit Error state with message: 'Microphone access needed — check System Settings > Privacy > Microphone'",
-        "Error state shows in overlay. Next hotkey press resets Error to Idle (retries permission check on subsequent press)",
-        "NSMicrophoneUsageDescription already set in tauri.conf.json infoPlist from US-001",
-        "Typecheck passes (`cargo check` in src-tauri)"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": "Accessibility check runs both on startup (setup closure) and before each recording attempt. AudioCapture failures (new() or start_recording()) emit user-friendly microphone permission error. Error state shows in overlay; next hotkey press resets to Idle for retry."
-    },
-    {
-      "id": "US-012",
-      "title": "Add configurable hotkey with persistence",
-      "description": "As a user, I want to change the dictation hotkey so it doesn't conflict with Alfred, Raycast, or other apps.",
-      "acceptanceCriteria": [
-        "Create config handling in lib.rs (or a new config.rs module): read/write config.json from ~/Library/Application Support/com.dictate.app/config.json",
-        "Config stores hotkey as string (e.g. 'Alt+Space', 'Ctrl+Shift+D')",
-        "On startup, read config.json for saved hotkey. If no config exists, default to Alt+Space",
-        "Add Tauri command get_hotkey that returns current hotkey string",
-        "Add Tauri command set_hotkey(new_hotkey: String) that unregisters old global shortcut, registers new one, saves to config.json. Returns error if registration fails (invalid or already taken)",
-        "Register both commands in Tauri builder",
-        "Typecheck passes (`cargo check` in src-tauri)"
-      ],
-      "priority": 12,
-      "passes": true,
-      "notes": "Config stored at ~/Library/Application Support/com.dictate.app/config.json. GlobalShortcutExt trait provides runtime unregister/on_shortcut methods. Shortcut API requires &str not &String. set_hotkey re-registers old shortcut on failure for rollback safety."
-    },
-    {
-      "id": "US-013",
-      "title": "Add hotkey settings UI",
-      "description": "As a user, I want a simple UI to view and change my dictation hotkey.",
-      "acceptanceCriteria": [
-        "Create src/components/Settings.tsx with a small settings panel showing current hotkey and a button/input to change it",
-        "Settings panel calls get_hotkey Tauri command on mount to display current hotkey",
-        "User can enter a new hotkey combination and click 'Save' to call set_hotkey Tauri command",
-        "Show success message on successful change, error message on failure",
-        "Settings accessible via a small gear icon in the overlay (visible in non-Idle states) or keyboard shortcut",
-        "Update App.tsx to include Settings component",
-        "Update capabilities/default.json if any new permissions are needed for invoke commands",
-        "Typecheck passes (`npx tsc --noEmit`)",
-        "Verify in browser using dev-browser skill"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": "Settings panel integrated into Overlay component with gear icon. Uses @tauri-apps/api/core invoke() to call get_hotkey/set_hotkey commands. No additional capabilities needed — core:default covers custom invoke commands. Input field for new hotkey string with save button, success/error feedback."
+      "passes": false,
+      "notes": ""
     }
   ]
 }
