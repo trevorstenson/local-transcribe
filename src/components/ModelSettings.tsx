@@ -40,6 +40,7 @@ export function ModelSettings() {
   const [smartPaste, setSmartPaste] = useState(true);
   const [autostart, setAutostart] = useState(false);
   const [language, setLanguage] = useState("en");
+  const [vocabEnabled, setVocabEnabled] = useState<boolean>(true);
 
   const fetchModels = async () => {
     try {
@@ -54,6 +55,7 @@ export function ModelSettings() {
     fetchModels();
     invoke<boolean>("get_smart_paste").then(setSmartPaste);
     invoke<string>("get_language").then(setLanguage);
+    invoke<boolean>("get_vocab_enabled").then(setVocabEnabled);
     isEnabled().then(setAutostart).catch(() => {});
 
     const unlistenModel = listen("model-changed", () => {
@@ -101,6 +103,17 @@ export function ModelSettings() {
       await invoke("set_smart_paste", { enabled: newValue });
     } catch (e) {
       setSmartPaste(!newValue);
+      setError(String(e));
+    }
+  };
+
+  const handleToggleVocab = async () => {
+    const newValue = !vocabEnabled;
+    setVocabEnabled(newValue);
+    try {
+      await invoke("set_vocab_enabled", { enabled: newValue });
+    } catch (e) {
+      setVocabEnabled(!newValue);
       setError(String(e));
     }
   };
@@ -195,6 +208,27 @@ export function ModelSettings() {
           <div
             className={`w-9 h-5 rounded-full transition-colors flex items-center ${
               autostart ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
+            }`}
+          >
+            <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
+          </div>
+        </button>
+
+        <button
+          onClick={handleToggleVocab}
+          className="flex items-center justify-between w-full"
+        >
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-medium">Personal Vocabulary</span>
+            <span className="text-xs text-white/40">
+              {vocabEnabled
+                ? "Corrects transcriptions using your custom dictionary"
+                : "Vocabulary corrections are disabled"}
+            </span>
+          </div>
+          <div
+            className={`w-9 h-5 rounded-full transition-colors flex items-center ${
+              vocabEnabled ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
             }`}
           >
             <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
