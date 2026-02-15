@@ -44,8 +44,8 @@ pub fn show_settings_window(app: &tauri::AppHandle) {
             tauri::WebviewUrl::App("index.html".into()),
         )
         .title("Dictate Settings")
-        .inner_size(420.0, 520.0)
-        .resizable(false)
+        .inner_size(420.0, 680.0)
+        .resizable(true)
         .center()
         .visible(true)
         .focused(true)

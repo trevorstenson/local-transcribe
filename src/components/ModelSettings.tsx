@@ -161,7 +161,7 @@ export function ModelSettings() {
         </select>
       </div>
 
-      <div className="flex flex-col gap-2 flex-1 overflow-y-auto">
+      <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto pr-1">
         {filteredModels.map((model) => (
           <ModelCard
             key={model.name}
@@ -173,7 +173,7 @@ export function ModelSettings() {
         ))}
       </div>
 
-      <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
+      <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3 shrink-0">
         <button
           onClick={handleToggleSmartPaste}
           className="flex items-center justify-between w-full"
