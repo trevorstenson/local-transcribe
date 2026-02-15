@@ -2,8 +2,10 @@ mod audio;
 mod config;
 mod input;
 mod state;
+mod tray;
 mod transcription;
 
+use serde::Serialize;
 use state::{DictationState, SharedState, StatePayload};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -391,14 +393,85 @@ fn set_hotkey(
         format!("Failed to register new hotkey '{}': {}", new_hotkey, e)
     })?;
 
-    // Save to config
+    // Save to config (preserve selected_model)
+    let selected_model = {
+        let shared_state = app.state::<SharedState>();
+        let state = shared_state.lock();
+        state.selected_model.clone()
+    };
     let cfg = config::AppConfig {
         hotkey: new_hotkey.clone(),
+        selected_model,
     };
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Update in-memory state
     *current_hotkey.0.lock().unwrap() = new_hotkey;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ModelInfoPayload {
+    name: String,
+    size_mb: u32,
+    description: String,
+    downloaded: bool,
+    selected: bool,
+}
+
+#[tauri::command]
+fn get_models(shared_state: tauri::State<'_, SharedState>) -> Vec<ModelInfoPayload> {
+    let state = shared_state.lock();
+    let selected = &state.selected_model;
+
+    transcription::model_manager::AVAILABLE_MODELS
+        .iter()
+        .map(|m| ModelInfoPayload {
+            name: m.name.to_string(),
+            size_mb: m.size_mb,
+            description: m.description.to_string(),
+            downloaded: transcription::model_manager::model_exists(m.name),
+            selected: m.name == selected,
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn select_model(app: tauri::AppHandle, model_name: String) -> Result<(), String> {
+    // Validate model name
+    let valid = transcription::model_manager::AVAILABLE_MODELS
+        .iter()
+        .any(|m| m.name == model_name);
+    if !valid {
+        return Err(format!("Unknown model: {}", model_name));
+    }
+
+    // Update selected_model in state
+    {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.selected_model = model_name.clone();
+    }
+
+    // Persist to config
+    let hotkey = app.state::<CurrentHotkey>().0.lock().unwrap().clone();
+    let cfg = config::AppConfig {
+        hotkey,
+        selected_model: model_name.clone(),
+    };
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Download + load the model in a blocking thread
+    let app_clone = app.clone();
+    tokio::task::spawn_blocking(move || {
+        setup_model(app_clone);
+    })
+    .await
+    .map_err(|e| format!("Model setup failed: {}", e))?;
+
+    // Emit event so the settings UI can refresh
+    let _ = app.emit("model-changed", ());
 
     Ok(())
 }
@@ -450,12 +523,17 @@ fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Load config for saved hotkey
+    // Load config for saved hotkey and model
     let app_config = config::load_config();
     let hotkey = app_config.hotkey.clone();
+    let selected_model = app_config.selected_model.clone();
 
-    // Create shared state
-    let shared_state: SharedState = Arc::new(parking_lot::Mutex::new(state::AppState::default()));
+    // Create shared state with persisted model selection
+    let shared_state: SharedState = Arc::new(parking_lot::Mutex::new(state::AppState {
+        dictation_state: DictationState::Idle,
+        model_path: None,
+        selected_model,
+    }));
 
     // Spawn transcription thread
     let (req_tx, resp_rx) = transcription::whisper::spawn_transcription_thread();
@@ -466,7 +544,7 @@ pub fn run() {
         .manage(TranscriptionReceiver(std::sync::Mutex::new(resp_rx)))
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
@@ -479,6 +557,9 @@ pub fn run() {
                     })
                     .build(),
             )?;
+
+            // Set up system tray icon
+            tray::setup_tray(app)?;
 
             // Make overlay window non-activating (doesn't steal focus)
             #[cfg(target_os = "macos")]
