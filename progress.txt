@@ -8,6 +8,11 @@
 - cpal 0.17: `build_input_stream` takes 4 args: config, data_callback, error_callback, timeout (Option<Duration>). Must call `.play()` after building. Drop stream to stop it.
 - Whisper models stored at `~/Library/Application Support/com.dictate.app/models/` — use `transcription::model_manager::models_dir()`
 - Model catalog in `AVAILABLE_MODELS` const array — use `model_exists()` / `model_path()` to check/locate cached models
+- whisper-rs 0.15: `WhisperContext::new_with_params(path, WhisperContextParameters::default())` to load model. `ctx.create_state()` for WhisperState. `FullParams::new(SamplingStrategy::Greedy { best_of: 1 })` for params. `state.full(params, &audio)` then `state.as_iter()` with `.to_str_lossy()` to collect text.
+- Transcription runs on a dedicated std::thread with mpsc channels (TranscriptionRequest/TranscriptionResponse) since WhisperState is not Send+Sync in all contexts
+- enigo 0.6: `Enigo::new(&Settings::default())`, uses `key(Key::Meta, Direction::Press)` / `key(Key::Unicode('v'), Direction::Click)` / `key(Key::Meta, Direction::Release)` — single `key()` method with `Direction` enum, NOT separate key_down/key_up methods
+- arboard 3.6: `Clipboard::new()?.set_text(text)?` — simple clipboard access, no features needed
+- macOS accessibility check: `extern "C" { fn AXIsProcessTrusted() -> bool; }` — no extra crate needed, comes from ApplicationServices framework linked by default
 ---
 
 ## 2026-02-14 - US-001
@@ -53,4 +58,33 @@
   - Model filenames follow pattern: `ggml-{model_name}.bin` (with dots replaced, e.g., `ggml-base.en.bin`)
   - Models are stored in `~/Library/Application Support/com.dictate.app/models/` via `dirs::data_dir()`
   - `reqwest::Response::bytes_stream()` + `futures_util::StreamExt::next()` for chunked downloads with progress
+---
+
+## 2026-02-14 - US-004
+- Created transcription engine with dedicated thread for Whisper inference
+- `transcription/whisper.rs`: TranscriptionService (owns WhisperContext), TranscriptionRequest/TranscriptionResponse enums, spawn_transcription_thread() with mpsc channels
+- TranscriptionService::load_model() creates WhisperContext with default params
+- TranscriptionService::transcribe() creates WhisperState, configures FullParams (Greedy best_of:1, 4 threads, English, no_context, suppress_blank, suppress_nst, no timestamps, no progress printing), runs full(), collects segment text via as_iter()
+- Updated transcription/mod.rs to re-export whisper module
+- Files changed: 2 (1 new whisper.rs + mod.rs modified)
+- **Learnings for future iterations:**
+  - whisper-rs 0.15 API: `WhisperContext::new_with_params(path, WhisperContextParameters::default())` for loading
+  - `ctx.create_state()` returns a mutable WhisperState needed for `full(params, audio_data)`
+  - `state.as_iter()` returns segment iterator, use `.to_str_lossy()` for text (handles invalid UTF-8)
+  - `set_no_context(true)` prevents using prior context for each transcription — important for independent dictation segments
+  - `set_suppress_nst(true)` suppresses non-speech tokens for cleaner output
+  - std::sync::mpsc used for thread communication (not tokio) since the transcription thread is a plain std::thread
+---
+
+## 2026-02-14 - US-005
+- Created text paste module with accessibility permission check
+- `input/mod.rs`: Re-exports paste module
+- `input/paste.rs`: `paste_text(text)` writes to clipboard via arboard, sleeps 50ms, simulates Cmd+V via enigo (Meta press, Unicode('v') click, Meta release). `check_accessibility_permission()` calls `AXIsProcessTrusted()` via extern C on macOS, returns true on other platforms
+- Added `mod input;` to lib.rs
+- Files changed: 3 (2 new input module files + lib.rs modified)
+- **Learnings for future iterations:**
+  - enigo 0.6 uses a unified `key(Key, Direction)` method — Direction::Press/Release/Click, NOT separate key_down/key_up functions
+  - `Key::Meta` is the Cmd key on macOS (deprecated alias `Key::Command` exists but don't use it)
+  - `AXIsProcessTrusted()` is available via extern C without any extra crate — it's in the ApplicationServices framework linked by default on macOS
+  - arboard `Clipboard::new()` and `set_text()` return Result types that need error mapping (not anyhow-compatible directly)
 ---

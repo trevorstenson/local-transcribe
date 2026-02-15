@@ -79,8 +79,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "whisper-rs 0.15: WhisperContext::new_with_params() with default params, create_state() for WhisperState, FullParams::new(Greedy{best_of:1}), state.full(params, audio) then state.as_iter() with to_str_lossy() for segments. Uses std::sync::mpsc channels for thread communication."
     },
     {
       "id": "US-005",
@@ -95,8 +95,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "enigo 0.6: Enigo::new(&Settings::default()), key(Key::Meta, Direction::Press/Release), key(Key::Unicode('v'), Direction::Click). arboard 3.6: Clipboard::new(), set_text(). AXIsProcessTrusted via extern C for accessibility check."
     },
     {
       "id": "US-006",

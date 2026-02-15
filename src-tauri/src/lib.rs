@@ -1,4 +1,5 @@
 mod audio;
+mod input;
 mod transcription;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
