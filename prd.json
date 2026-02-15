@@ -147,8 +147,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Model setup runs in a background std::thread from setup closure. Download uses a tokio Runtime::new().block_on() for async reqwest download. Transcription result handling spawns a std::thread that blocks on mpsc recv() then pastes text or sets error state. Empty transcription results silently return to Idle without pasting."
     },
     {
       "id": "US-009",

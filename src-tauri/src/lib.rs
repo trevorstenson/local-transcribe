@@ -76,7 +76,7 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
             }
         }
         DictationState::Recording { .. } => {
-            // Stop recording
+            // Stop recording and begin transcription
             let audio_data = {
                 let active_capture = app_handle.state::<ActiveCapture>();
                 let mut ac = active_capture.0.lock().unwrap();
@@ -87,21 +87,119 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                 }
             };
 
-            // Update state to Idle (US-008 will change this to Processing)
+            // If no audio data, just go back to Idle
+            if audio_data.is_empty() {
+                {
+                    let mut state = shared_state.lock();
+                    state.dictation_state = DictationState::Idle;
+                }
+                emit_state(app_handle, &DictationState::Idle);
+                if let Some(window) = app_handle.get_webview_window("overlay") {
+                    let _ = window.hide();
+                }
+                return;
+            }
+
+            // Set state to Processing
             {
                 let mut state = shared_state.lock();
-                state.dictation_state = DictationState::Idle;
+                state.dictation_state = DictationState::Processing;
+            }
+            emit_state(app_handle, &DictationState::Processing);
+
+            // Send audio to transcription thread
+            {
+                let tx = app_handle.state::<TranscriptionSender>();
+                let tx = tx.0.lock().unwrap();
+                let _ = tx.send(TranscriptionRequest::Transcribe(audio_data));
             }
 
-            emit_state(app_handle, &DictationState::Idle);
+            // Spawn a thread to wait for the transcription result
+            let app_handle_clone = app_handle.clone();
+            std::thread::spawn(move || {
+                let resp = {
+                    let rx = app_handle_clone.state::<TranscriptionReceiver>();
+                    let rx = rx.0.lock().unwrap();
+                    rx.recv()
+                };
 
-            // Hide overlay window
-            if let Some(window) = app_handle.get_webview_window("overlay") {
-                let _ = window.hide();
-            }
+                match resp {
+                    Ok(TranscriptionResponse::TranscriptionComplete(Ok(text))) => {
+                        let trimmed = text.trim().to_string();
+                        if trimmed.is_empty() {
+                            // Silent audio — go back to Idle without pasting
+                            let shared_state = app_handle_clone.state::<SharedState>();
+                            {
+                                let mut state = shared_state.lock();
+                                state.dictation_state = DictationState::Idle;
+                            }
+                            emit_state(&app_handle_clone, &DictationState::Idle);
+                            if let Some(window) =
+                                app_handle_clone.get_webview_window("overlay")
+                            {
+                                let _ = window.hide();
+                            }
+                        } else {
+                            // Paste the transcribed text
+                            if let Err(e) = input::paste::paste_text(&trimmed) {
+                                log::error!("Failed to paste text: {}", e);
+                                let error_state = DictationState::Error {
+                                    message: format!("Failed to paste: {}", e),
+                                };
+                                let shared_state = app_handle_clone.state::<SharedState>();
+                                {
+                                    let mut state = shared_state.lock();
+                                    state.dictation_state = error_state.clone();
+                                }
+                                emit_state(&app_handle_clone, &error_state);
+                                return;
+                            }
 
-            // Audio data captured but not yet sent to transcription (US-008 handles this)
-            let _ = audio_data;
+                            // Success — back to Idle
+                            let shared_state = app_handle_clone.state::<SharedState>();
+                            {
+                                let mut state = shared_state.lock();
+                                state.dictation_state = DictationState::Idle;
+                            }
+                            emit_state(&app_handle_clone, &DictationState::Idle);
+                            if let Some(window) =
+                                app_handle_clone.get_webview_window("overlay")
+                            {
+                                let _ = window.hide();
+                            }
+                        }
+                    }
+                    Ok(TranscriptionResponse::TranscriptionComplete(Err(e))) => {
+                        log::error!("Transcription error: {}", e);
+                        let error_state = DictationState::Error {
+                            message: format!("Transcription failed: {}", e),
+                        };
+                        let shared_state = app_handle_clone.state::<SharedState>();
+                        {
+                            let mut state = shared_state.lock();
+                            state.dictation_state = error_state.clone();
+                        }
+                        emit_state(&app_handle_clone, &error_state);
+                        // Keep overlay visible for error state
+                    }
+                    Ok(_) => {
+                        // Unexpected response type
+                        log::error!("Unexpected transcription response");
+                    }
+                    Err(e) => {
+                        log::error!("Failed to receive transcription response: {}", e);
+                        let error_state = DictationState::Error {
+                            message: "Transcription thread disconnected".to_string(),
+                        };
+                        let shared_state = app_handle_clone.state::<SharedState>();
+                        {
+                            let mut state = shared_state.lock();
+                            state.dictation_state = error_state.clone();
+                        }
+                        emit_state(&app_handle_clone, &error_state);
+                    }
+                }
+            });
         }
         DictationState::Processing | DictationState::Downloading { .. } => {
             // Ignore hotkey during processing or downloading
@@ -119,6 +217,119 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
             if let Some(window) = app_handle.get_webview_window("overlay") {
                 let _ = window.hide();
             }
+        }
+    }
+}
+
+/// Downloads the model if needed and loads it into the transcription thread.
+fn setup_model(app_handle: tauri::AppHandle) {
+    let shared_state = app_handle.state::<SharedState>();
+    let selected_model = {
+        let state = shared_state.lock();
+        state.selected_model.clone()
+    };
+
+    let needs_download = !transcription::model_manager::model_exists(&selected_model);
+
+    if needs_download {
+        // Show overlay and emit Downloading state
+        {
+            let mut state = shared_state.lock();
+            state.dictation_state = DictationState::Downloading { progress: 0.0 };
+        }
+        emit_state(
+            &app_handle,
+            &DictationState::Downloading { progress: 0.0 },
+        );
+        if let Some(window) = app_handle.get_webview_window("overlay") {
+            let _ = window.show();
+        }
+
+        // Run async download on a tokio runtime in a separate thread
+        let app_handle_dl = app_handle.clone();
+        let model_name = selected_model.clone();
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        let download_result = rt.block_on(async {
+            let app_handle_progress = app_handle_dl.clone();
+            transcription::model_manager::download_model(&model_name, move |downloaded, total| {
+                let progress = if total > 0 {
+                    downloaded as f32 / total as f32
+                } else {
+                    0.0
+                };
+                let dl_state = DictationState::Downloading { progress };
+                emit_state(&app_handle_progress, &dl_state);
+            })
+            .await
+        });
+
+        match download_result {
+            Ok(path) => {
+                let path_str = path.to_string_lossy().to_string();
+                load_model(&app_handle, &path_str, &selected_model);
+            }
+            Err(e) => {
+                log::error!("Failed to download model: {}", e);
+                let error_state = DictationState::Error {
+                    message: format!("Model download failed: {}", e),
+                };
+                {
+                    let mut state = shared_state.lock();
+                    state.dictation_state = error_state.clone();
+                }
+                emit_state(&app_handle, &error_state);
+            }
+        }
+    } else {
+        // Model already exists, load it directly
+        let path = transcription::model_manager::model_path(&selected_model)
+            .expect("Model should exist");
+        let path_str = path.to_string_lossy().to_string();
+        load_model(&app_handle, &path_str, &selected_model);
+    }
+}
+
+/// Sends LoadModel request to transcription thread and waits for response.
+fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
+    let tx = app_handle.state::<TranscriptionSender>();
+    {
+        let tx = tx.0.lock().unwrap();
+        let _ = tx.send(TranscriptionRequest::LoadModel(path.to_string()));
+    }
+
+    let resp = {
+        let rx = app_handle.state::<TranscriptionReceiver>();
+        let rx = rx.0.lock().unwrap();
+        rx.recv()
+    };
+
+    let shared_state = app_handle.state::<SharedState>();
+    match resp {
+        Ok(TranscriptionResponse::ModelLoaded(Ok(()))) => {
+            log::info!("Model loaded successfully");
+            {
+                let mut state = shared_state.lock();
+                state.model_path = Some(path.to_string());
+                state.dictation_state = DictationState::Idle;
+            }
+            emit_state(app_handle, &DictationState::Idle);
+            if let Some(window) = app_handle.get_webview_window("overlay") {
+                let _ = window.hide();
+            }
+        }
+        Ok(TranscriptionResponse::ModelLoaded(Err(e))) => {
+            log::error!("Failed to load model: {}", e);
+            let error_state = DictationState::Error {
+                message: format!("Failed to load model: {}", e),
+            };
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = error_state.clone();
+            }
+            emit_state(app_handle, &error_state);
+        }
+        _ => {
+            log::error!("Unexpected response when loading model");
         }
     }
 }
@@ -148,6 +359,12 @@ pub fn run() {
                     })
                     .build(),
             )?;
+
+            // Download/load model on startup in a background thread
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                setup_model(app_handle);
+            });
 
             Ok(())
         })
