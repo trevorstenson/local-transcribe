@@ -5,6 +5,7 @@ mod input;
 mod state;
 mod tray;
 mod transcription;
+mod vocabulary;
 
 use serde::Serialize;
 use state::{DictationState, SharedState, StatePayload};
