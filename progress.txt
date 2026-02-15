@@ -26,6 +26,9 @@
 - Tauri v2 `WebviewWindow::ns_window()` returns `*mut c_void` — cast to `cocoa::base::id` for NSWindow trait methods
 - cocoa 0.26: `NSWindowCollectionBehavior` bitflags for CanJoinAllSpaces | Stationary | IgnoresCycle, `setLevel_(3)` for NSFloatingWindowLevel
 - `#[cfg(target_os = "macos")]` gate platform-specific functions, use `#[cfg(target_os = "macos")]` on call sites too
+- App config stored at `~/Library/Application Support/com.dictate.app/config.json` — use `config::load_config()` / `config::save_config()`
+- Tauri v2 global shortcut runtime management: `use tauri_plugin_global_shortcut::GlobalShortcutExt;` then `app.global_shortcut().unregister(key)` / `.on_shortcut(key, handler)` / `.is_registered(key)`. Requires `&str` not `&String`.
+- Tauri commands: `#[tauri::command] fn name(...)`, register with `.invoke_handler(tauri::generate_handler![cmd1, cmd2])`. Commands returning `Result<T, String>` auto-serialize errors to frontend.
 ---
 
 ## 2026-02-14 - US-001
@@ -189,4 +192,19 @@
   - `check_accessibility_permission()` is not cfg-gated — it returns `true` on non-macOS so it's safe to call unconditionally in lib.rs
   - AudioCapture failures (cpal errors) are a reasonable proxy for missing microphone permission — macOS doesn't have a direct "check microphone permission" API without AVFoundation
   - Error state display relies on the overlay being shown — must call `window.show()` when emitting Error state
+---
+
+## 2026-02-14 - US-012
+- Added configurable hotkey with persistence to config.json
+- `config.rs`: New module with `AppConfig` struct (hotkey field), `load_config()` reads from `~/Library/Application Support/com.dictate.app/config.json` (defaults to "alt+space"), `save_config()` writes to disk
+- `lib.rs`: Added `CurrentHotkey` newtype wrapper for managed state, `get_hotkey` Tauri command returns current hotkey, `set_hotkey` Tauri command unregisters old shortcut + registers new one + saves config (with rollback on failure)
+- Startup now reads saved hotkey from config instead of hardcoding "alt+space"
+- Registered both commands via `.invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey])`
+- Files changed: 2 (1 new config.rs + lib.rs modified — added ~60 lines)
+- **Learnings for future iterations:**
+  - `tauri_plugin_global_shortcut::GlobalShortcutExt` trait provides runtime shortcut management: `app.global_shortcut().unregister()` / `.on_shortcut()` / `.is_registered()`
+  - Global shortcut API methods accept `&str` not `&String` — use `.as_str()` when passing String references
+  - `set_hotkey` implements rollback: if new shortcut registration fails, re-registers the old one
+  - Tauri commands returning `Result<T, String>` auto-serialize — use `.map_err(|e| format!(...))` for error conversion
+  - `setup` closure needs `move` keyword when capturing variables (like the hotkey string) from outside scope
 ---

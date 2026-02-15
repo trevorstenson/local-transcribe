@@ -213,8 +213,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Config stored at ~/Library/Application Support/com.dictate.app/config.json. GlobalShortcutExt trait provides runtime unregister/on_shortcut methods. Shortcut API requires &str not &String. set_hotkey re-registers old shortcut on failure for rollback safety."
     },
     {
       "id": "US-013",
