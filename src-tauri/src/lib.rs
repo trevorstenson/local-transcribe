@@ -9,6 +9,26 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::ShortcutState;
 use transcription::whisper::{TranscriptionRequest, TranscriptionResponse};
 
+/// Makes the overlay window non-activating so it doesn't steal focus from the current app.
+#[cfg(target_os = "macos")]
+fn make_window_non_activating(window: &tauri::WebviewWindow) {
+    use cocoa::appkit::{NSWindow, NSWindowCollectionBehavior};
+    use cocoa::base::id;
+
+    if let Ok(ns_window) = window.ns_window() {
+        let ns_window = ns_window as id;
+        unsafe {
+            let behavior = NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
+                | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary
+                | NSWindowCollectionBehavior::NSWindowCollectionBehaviorIgnoresCycle;
+            ns_window.setCollectionBehavior_(behavior);
+
+            // NSFloatingWindowLevel = 3
+            ns_window.setLevel_(3);
+        }
+    }
+}
+
 /// Wrapper to store the transcription channel sender as managed state.
 pub struct TranscriptionSender(pub std::sync::Mutex<std::sync::mpsc::Sender<TranscriptionRequest>>);
 
@@ -359,6 +379,12 @@ pub fn run() {
                     })
                     .build(),
             )?;
+
+            // Make overlay window non-activating (doesn't steal focus)
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("overlay") {
+                make_window_non_activating(&window);
+            }
 
             // Download/load model on startup in a background thread
             let app_handle = app.handle().clone();
