@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { VocabularyModal } from "./VocabularyModal";
 
 interface ModelInfo {
   name: string;
@@ -41,6 +42,7 @@ export function ModelSettings() {
   const [autostart, setAutostart] = useState(false);
   const [language, setLanguage] = useState("en");
   const [vocabEnabled, setVocabEnabled] = useState<boolean>(true);
+  const [showVocabModal, setShowVocabModal] = useState(false);
 
   const fetchModels = async () => {
     try {
@@ -234,9 +236,23 @@ export function ModelSettings() {
             <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
           </div>
         </button>
+
+        {vocabEnabled && (
+          <button
+            onClick={() => setShowVocabModal(true)}
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors text-left pl-0.5"
+          >
+            Manage Vocabulary...
+          </button>
+        )}
       </div>
 
       {error && <div className="mt-3 text-red-400 text-sm">{error}</div>}
+
+      <VocabularyModal
+        visible={showVocabModal}
+        onClose={() => setShowVocabModal(false)}
+      />
     </div>
   );
 }
