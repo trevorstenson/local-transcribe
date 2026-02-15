@@ -66,6 +66,7 @@ impl TranscriptionService {
 pub enum TranscriptionRequest {
     LoadModel(String),
     Transcribe(Vec<f32>),
+    TranscribePartial(Vec<f32>),
     Shutdown,
 }
 
@@ -77,9 +78,11 @@ pub enum TranscriptionResponse {
 pub fn spawn_transcription_thread() -> (
     mpsc::Sender<TranscriptionRequest>,
     mpsc::Receiver<TranscriptionResponse>,
+    mpsc::Receiver<String>,
 ) {
     let (req_tx, req_rx) = mpsc::channel::<TranscriptionRequest>();
     let (resp_tx, resp_rx) = mpsc::channel::<TranscriptionResponse>();
+    let (partial_tx, partial_rx) = mpsc::channel::<String>();
 
     std::thread::spawn(move || {
         let mut service = TranscriptionService::new();
@@ -94,6 +97,39 @@ pub fn spawn_transcription_thread() -> (
                     let result = service.transcribe(&audio_data);
                     let _ = resp_tx.send(TranscriptionResponse::TranscriptionComplete(result));
                 }
+                TranscriptionRequest::TranscribePartial(audio_data) => {
+                    // Drain stale partials — only process the newest one
+                    let mut latest_audio = audio_data;
+                    let mut got_final = None;
+                    while let Ok(queued) = req_rx.try_recv() {
+                        match queued {
+                            TranscriptionRequest::TranscribePartial(newer) => {
+                                latest_audio = newer;
+                            }
+                            TranscriptionRequest::Transcribe(final_audio) => {
+                                got_final = Some(final_audio);
+                                break;
+                            }
+                            TranscriptionRequest::LoadModel(path) => {
+                                let result = service.load_model(&path);
+                                let _ = resp_tx.send(TranscriptionResponse::ModelLoaded(result));
+                            }
+                            TranscriptionRequest::Shutdown => {
+                                return;
+                            }
+                        }
+                    }
+
+                    if let Some(final_audio) = got_final {
+                        let result = service.transcribe(&final_audio);
+                        let _ = resp_tx.send(TranscriptionResponse::TranscriptionComplete(result));
+                    } else {
+                        let result = service.transcribe(&latest_audio);
+                        if let Ok(text) = result {
+                            let _ = partial_tx.send(text.trim().to_string());
+                        }
+                    }
+                }
                 TranscriptionRequest::Shutdown => {
                     break;
                 }
@@ -101,5 +137,5 @@ pub fn spawn_transcription_thread() -> (
         }
     });
 
-    (req_tx, resp_rx)
+    (req_tx, resp_rx, partial_rx)
 }
