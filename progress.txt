@@ -4,6 +4,10 @@
 - `cmake` is required for building whisper-rs (compiles whisper.cpp from source)
 - Rust lib name is `dictate_lib` (in Cargo.toml [lib] section), referenced in main.rs as `dictate_lib::run()`
 - TypeScript check: `npx tsc --noEmit`, Rust check: `cargo check` in `src-tauri/`
+- cpal 0.17: `SampleRate` is `pub type SampleRate = u32` (not a tuple struct). Use `config.sample_rate()` directly, NOT `.0`
+- cpal 0.17: `build_input_stream` takes 4 args: config, data_callback, error_callback, timeout (Option<Duration>). Must call `.play()` after building. Drop stream to stop it.
+- Whisper models stored at `~/Library/Application Support/com.dictate.app/models/` — use `transcription::model_manager::models_dir()`
+- Model catalog in `AVAILABLE_MODELS` const array — use `model_exists()` / `model_path()` to check/locate cached models
 ---
 
 ## 2026-02-14 - US-001
@@ -22,4 +26,31 @@
   - `cmake` must be installed for whisper-rs to compile (uses cmake crate internally)
   - The Tauri scaffold generates `tauri-plugin-opener` by default - we replaced it with our own dependencies
   - Cargo.lock should be committed for reproducible builds
+---
+
+## 2026-02-14 - US-002
+- Created audio capture module with resampler for Whisper input
+- `audio/resampler.rs`: Linear interpolation resampler (from_rate → to_rate), returns input unchanged if rates match or empty
+- `audio/capture.rs`: `AudioCapture` struct using cpal for mic input — supports F32 and I16 sample formats, converts multi-channel to mono, resamples to 16kHz on stop
+- `audio/mod.rs`: Re-exports capture and resampler modules
+- Added `mod audio;` to lib.rs
+- Files changed: 4 (3 new audio module files + lib.rs modified)
+- **Learnings for future iterations:**
+  - cpal 0.17 `SampleRate` is a type alias for `u32`, not a tuple struct — use `config.sample_rate()` directly without `.0`
+  - `build_input_stream` requires 4 args including `None` timeout as last param
+  - Stream must be stored (has `#[must_use]`) — dropping stops recording
+  - `SampleFormat` is `#[non_exhaustive]` so need a catch-all match arm
+---
+
+## 2026-02-14 - US-003
+- Created Whisper model manager with HuggingFace download capability
+- `transcription/mod.rs`: Re-exports model_manager module
+- `transcription/model_manager.rs`: ModelInfo struct, AVAILABLE_MODELS catalog (5 models), models_dir(), model_exists(), model_path(), async download_model() with progress callback
+- Added `mod transcription;` to lib.rs
+- Files changed: 3 (2 new transcription module files + lib.rs modified)
+- **Learnings for future iterations:**
+  - HuggingFace model URLs follow pattern: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}`
+  - Model filenames follow pattern: `ggml-{model_name}.bin` (with dots replaced, e.g., `ggml-base.en.bin`)
+  - Models are stored in `~/Library/Application Support/com.dictate.app/models/` via `dirs::data_dir()`
+  - `reqwest::Response::bytes_stream()` + `futures_util::StreamExt::next()` for chunked downloads with progress
 ---

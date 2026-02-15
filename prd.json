@@ -41,8 +41,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cpal 0.17 SampleRate is a u32 type alias (not a tuple struct), so use config.sample_rate() directly without .0 accessor."
     },
     {
       "id": "US-003",
@@ -61,8 +61,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ModelInfo uses static str references for zero-cost model catalog. download_model uses reqwest bytes_stream with futures-util StreamExt for chunked download with progress."
     },
     {
       "id": "US-004",
