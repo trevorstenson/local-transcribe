@@ -6,7 +6,11 @@ use std::sync::Arc;
 #[serde(tag = "type")]
 pub enum DictationState {
     Idle,
-    Recording { duration_ms: u64 },
+    Recording {
+        duration_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        partial_text: Option<String>,
+    },
     Processing,
     Downloading { progress: f32 },
     Error { message: String },

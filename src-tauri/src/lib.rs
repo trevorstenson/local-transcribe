@@ -7,6 +7,7 @@ mod transcription;
 
 use serde::Serialize;
 use state::{DictationState, SharedState, StatePayload};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -42,6 +43,14 @@ pub struct TranscriptionReceiver(
 
 /// Wrapper to store an active AudioCapture instance during recording.
 pub struct ActiveCapture(pub std::sync::Mutex<Option<audio::capture::AudioCapture>>);
+
+/// Signals the streaming partial transcription loop to stop.
+pub struct StreamingActive(pub Arc<AtomicBool>);
+
+/// Wrapper for the partial transcription results channel.
+pub struct PartialTranscriptionReceiver(
+    pub std::sync::Mutex<std::sync::mpsc::Receiver<String>>,
+);
 
 /// Emits the current dictation state to the frontend via a 'dictation-state' event.
 fn emit_state(app_handle: &tauri::AppHandle, dictation_state: &DictationState) {
@@ -91,19 +100,113 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                         // Update state to Recording
                         {
                             let mut state = shared_state.lock();
-                            state.dictation_state =
-                                DictationState::Recording { duration_ms: 0 };
+                            state.dictation_state = DictationState::Recording {
+                                duration_ms: 0,
+                                partial_text: None,
+                            };
                         }
 
                         emit_state(
                             app_handle,
-                            &DictationState::Recording { duration_ms: 0 },
+                            &DictationState::Recording {
+                                duration_ms: 0,
+                                partial_text: None,
+                            },
                         );
 
                         // Show overlay window without focus
                         if let Some(window) = app_handle.get_webview_window("overlay") {
                             let _ = window.show();
                         }
+
+                        // Start the streaming partial transcription loop
+                        let streaming_flag = app_handle.state::<StreamingActive>();
+                        streaming_flag.0.store(true, Ordering::SeqCst);
+                        let flag = Arc::clone(&streaming_flag.0);
+                        let app_stream = app_handle.clone();
+
+                        std::thread::spawn(move || {
+                            // Wait for initial audio to accumulate
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+
+                            while flag.load(Ordering::SeqCst) {
+                                let tick_start = std::time::Instant::now();
+
+                                // Clone the audio buffer
+                                let audio_data = {
+                                    let active_capture = app_stream.state::<ActiveCapture>();
+                                    let ac = active_capture.0.lock().unwrap();
+                                    match ac.as_ref() {
+                                        Some(capture) => capture.clone_buffer_resampled(),
+                                        None => break,
+                                    }
+                                };
+
+                                if audio_data.is_empty() {
+                                    std::thread::sleep(std::time::Duration::from_millis(500));
+                                    continue;
+                                }
+
+                                // Send partial transcription request
+                                {
+                                    let tx = app_stream.state::<TranscriptionSender>();
+                                    let tx = tx.0.lock().unwrap();
+                                    let _ = tx.send(TranscriptionRequest::TranscribePartial(
+                                        audio_data,
+                                    ));
+                                }
+
+                                // Wait for partial result on the dedicated channel
+                                let resp = {
+                                    let rx =
+                                        app_stream.state::<PartialTranscriptionReceiver>();
+                                    let rx = rx.0.lock().unwrap();
+                                    rx.recv_timeout(std::time::Duration::from_millis(5000))
+                                };
+
+                                if !flag.load(Ordering::SeqCst) {
+                                    break;
+                                }
+
+                                if let Ok(text) = resp {
+                                    let shared_state = app_stream.state::<SharedState>();
+                                    let new_state = {
+                                        let mut state = shared_state.lock();
+                                        if let DictationState::Recording {
+                                            duration_ms: d,
+                                            ..
+                                        } = state.dictation_state
+                                        {
+                                            let partial = if text.trim().is_empty() {
+                                                None
+                                            } else {
+                                                Some(text.trim().to_string())
+                                            };
+                                            state.dictation_state =
+                                                DictationState::Recording {
+                                                    duration_ms: d,
+                                                    partial_text: partial,
+                                                };
+                                            Some(state.dictation_state.clone())
+                                        } else {
+                                            None
+                                        }
+                                    };
+
+                                    if let Some(new_state) = new_state {
+                                        emit_state(&app_stream, &new_state);
+                                    }
+                                }
+
+                                // Sleep remaining time to hit ~1s interval
+                                let elapsed = tick_start.elapsed();
+                                if elapsed < std::time::Duration::from_millis(1000) {
+                                    std::thread::sleep(
+                                        std::time::Duration::from_millis(1000) - elapsed,
+                                    );
+                                }
+                            }
+                        });
                     }
                     Err(e) => {
                         log::error!("Failed to start recording: {}", e);
@@ -137,6 +240,10 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
             }
         }
         DictationState::Recording { .. } => {
+            // Stop the streaming loop
+            let streaming_flag = app_handle.state::<StreamingActive>();
+            streaming_flag.0.store(false, Ordering::SeqCst);
+
             // Stop recording and begin transcription
             let audio_data = {
                 let active_capture = app_handle.state::<ActiveCapture>();
@@ -574,13 +681,15 @@ pub fn run() {
     }));
 
     // Spawn transcription thread
-    let (req_tx, resp_rx) = transcription::whisper::spawn_transcription_thread();
+    let (req_tx, resp_rx, partial_rx) = transcription::whisper::spawn_transcription_thread();
 
     tauri::Builder::default()
         .manage(shared_state)
         .manage(TranscriptionSender(std::sync::Mutex::new(req_tx)))
         .manage(TranscriptionReceiver(std::sync::Mutex::new(resp_rx)))
+        .manage(PartialTranscriptionReceiver(std::sync::Mutex::new(partial_rx)))
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
+        .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
         .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste])
         .setup(move |app| {

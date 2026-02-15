@@ -91,6 +91,16 @@ impl AudioCapture {
         Ok(())
     }
 
+    /// Clones the current audio buffer and resamples to 16kHz for transcription.
+    /// This does NOT stop recording — the stream continues appending samples.
+    pub fn clone_buffer_resampled(&self) -> Vec<f32> {
+        let buffer = {
+            let buf = self.buffer.lock().unwrap();
+            buf.clone()
+        };
+        resampler::resample(&buffer, self.device_sample_rate, 16000)
+    }
+
     pub fn stop_recording(&mut self) -> Vec<f32> {
         // Drop the stream to stop recording
         self.stream = None;
