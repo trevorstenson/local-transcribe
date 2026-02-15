@@ -175,3 +175,18 @@
   - cocoa 0.26 APIs show deprecation warnings recommending objc2-app-kit, but function correctly
   - `#[cfg(target_os = "macos")]` needed both on the function definition AND the call site to avoid compile errors on other platforms
 ---
+
+## 2026-02-14 - US-011
+- Added permission checking with user-friendly error messages for Accessibility and Microphone permissions
+- On startup (setup closure): checks `check_accessibility_permission()`, emits Error state with guidance message if denied, shows overlay
+- Before recording (toggle_recording Idle→Recording): re-checks accessibility permission, returns early with Error state if denied
+- AudioCapture failures (`new()` and `start_recording()`): now emit Error state with microphone permission message instead of only logging
+- Error state shows in overlay; next hotkey press resets Error→Idle (already existed from US-007)
+- NSMicrophoneUsageDescription already configured in Info.plist from US-001
+- Files changed: 1 (lib.rs modified — added ~55 lines)
+- **Learnings for future iterations:**
+  - Permission checks should happen at two layers: startup (for user awareness) and before action (for runtime re-check after user grants permission)
+  - `check_accessibility_permission()` is not cfg-gated — it returns `true` on non-macOS so it's safe to call unconditionally in lib.rs
+  - AudioCapture failures (cpal errors) are a reasonable proxy for missing microphone permission — macOS doesn't have a direct "check microphone permission" API without AVFoundation
+  - Error state display relies on the overlay being shown — must call `window.show()` when emitting Error state
+---

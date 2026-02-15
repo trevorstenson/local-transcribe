@@ -196,8 +196,8 @@
         "Typecheck passes (`cargo check` in src-tauri)"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Accessibility check runs both on startup (setup closure) and before each recording attempt. AudioCapture failures (new() or start_recording()) emit user-friendly microphone permission error. Error state shows in overlay; next hotkey press resets to Idle for retry."
     },
     {
       "id": "US-012",
