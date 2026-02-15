@@ -340,13 +340,14 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                 let _ = tx.send(TranscriptionRequest::Transcribe(audio_data));
             }
 
-            // Spawn a thread to wait for the transcription result
+            // Spawn a thread to wait for the transcription result (with timeout)
             let app_handle_clone = app_handle.clone();
             std::thread::spawn(move || {
                 let resp = {
                     let rx = app_handle_clone.state::<TranscriptionReceiver>();
                     let rx = rx.0.lock().unwrap();
-                    rx.recv()
+                    rx.recv_timeout(std::time::Duration::from_secs(60))
+                        .map_err(|_| ())
                 };
 
                 match resp {
@@ -434,10 +435,10 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                         // Unexpected response type
                         log::error!("Unexpected transcription response");
                     }
-                    Err(e) => {
-                        log::error!("Failed to receive transcription response: {}", e);
+                    Err(_) => {
+                        log::error!("Transcription timed out or thread disconnected");
                         let error_state = DictationState::Error {
-                            message: "Transcription thread disconnected".to_string(),
+                            message: "Transcription timed out — try again".to_string(),
                         };
                         let shared_state = app_handle_clone.state::<SharedState>();
                         {
@@ -828,7 +829,8 @@ fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
     let resp = {
         let rx = app_handle.state::<TranscriptionReceiver>();
         let rx = rx.0.lock().unwrap();
-        rx.recv()
+        rx.recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|_| ())
     };
 
     let shared_state = app_handle.state::<SharedState>();
@@ -849,6 +851,17 @@ fn load_model(app_handle: &tauri::AppHandle, path: &str, _model_name: &str) {
             log::error!("Failed to load model: {}", e);
             let error_state = DictationState::Error {
                 message: format!("Failed to load model: {}", e),
+            };
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = error_state.clone();
+            }
+            emit_state(app_handle, &error_state);
+        }
+        Err(_) => {
+            log::error!("Model loading timed out or thread disconnected");
+            let error_state = DictationState::Error {
+                message: "Model loading timed out — try again".to_string(),
             };
             {
                 let mut state = shared_state.lock();
