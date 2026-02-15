@@ -22,8 +22,8 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "settings" => toggle_settings_window(app),
-            "history" => toggle_history_window(app),
+            "settings" => show_settings_window(app),
+            "history" => show_history_window(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -33,7 +33,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 /// Opens the settings window if it doesn't exist, or focuses it if it does.
-fn toggle_settings_window(app: &tauri::AppHandle) {
+pub fn show_settings_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -55,7 +55,7 @@ fn toggle_settings_window(app: &tauri::AppHandle) {
 }
 
 /// Opens the history window if it doesn't exist, or focuses it if it does.
-fn toggle_history_window(app: &tauri::AppHandle) {
+pub fn show_history_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("history") {
         let _ = window.show();
         let _ = window.set_focus();
