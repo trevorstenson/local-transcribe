@@ -502,16 +502,8 @@ fn set_hotkey(
     })?;
 
     // Save to config (preserve other settings)
-    let (selected_model, smart_paste) = {
-        let shared_state = app.state::<SharedState>();
-        let state = shared_state.lock();
-        (state.selected_model.clone(), state.smart_paste)
-    };
-    let cfg = config::AppConfig {
-        hotkey: new_hotkey.clone(),
-        selected_model,
-        smart_paste,
-    };
+    let mut cfg = config::load_config();
+    cfg.hotkey = new_hotkey.clone();
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Update in-memory state
@@ -564,13 +556,8 @@ async fn select_model(app: tauri::AppHandle, model_name: String) -> Result<(), S
     }
 
     // Persist to config
-    let hotkey = app.state::<CurrentHotkey>().0.lock().unwrap().clone();
-    let smart_paste = app.state::<SharedState>().lock().smart_paste;
-    let cfg = config::AppConfig {
-        hotkey,
-        selected_model: model_name.clone(),
-        smart_paste,
-    };
+    let mut cfg = config::load_config();
+    cfg.selected_model = model_name.clone();
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Download + load the model in a blocking thread
@@ -584,6 +571,15 @@ async fn select_model(app: tauri::AppHandle, model_name: String) -> Result<(), S
     // Emit event so the settings UI can refresh
     let _ = app.emit("model-changed", ());
 
+    Ok(())
+}
+
+#[tauri::command]
+fn save_overlay_position(x: f64, y: f64) -> Result<(), String> {
+    let mut cfg = config::load_config();
+    cfg.overlay_x = Some(x);
+    cfg.overlay_y = Some(y);
+    config::save_config(&cfg).map_err(|e| format!("Failed to save position: {}", e))?;
     Ok(())
 }
 
@@ -605,15 +601,8 @@ fn set_smart_paste(
     }
 
     // Persist to config
-    let shared_state = app.state::<SharedState>();
-    let state = shared_state.lock();
-    let hotkey = app.state::<CurrentHotkey>().0.lock().unwrap().clone();
-    let cfg = config::AppConfig {
-        hotkey,
-        selected_model: state.selected_model.clone(),
-        smart_paste: state.smart_paste,
-    };
-    drop(state);
+    let mut cfg = config::load_config();
+    cfg.smart_paste = enabled;
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
     Ok(())
@@ -691,7 +680,7 @@ pub fn run() {
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, save_overlay_position])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
@@ -712,6 +701,16 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("overlay") {
                 make_window_non_activating(&window);
+            }
+
+            // Restore saved overlay position
+            if let Some(window) = app.get_webview_window("overlay") {
+                let cfg = config::load_config();
+                if let (Some(x), Some(y)) = (cfg.overlay_x, cfg.overlay_y) {
+                    let _ = window.set_position(tauri::Position::Logical(
+                        tauri::LogicalPosition::new(x, y),
+                    ));
+                }
             }
 
             // Check accessibility permission on startup
