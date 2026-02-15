@@ -1,14 +1,16 @@
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     Manager,
 };
 
 pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let settings = MenuItemBuilder::with_id("settings", "Settings...").build(app)?;
+    let history = MenuItemBuilder::with_id("history", "History...").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit Dictate").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&settings)
+        .item(&history)
         .separator()
         .item(&quit)
         .build()?;
@@ -21,6 +23,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "settings" => toggle_settings_window(app),
+            "history" => toggle_history_window(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -48,5 +51,27 @@ fn toggle_settings_window(app: &tauri::AppHandle) {
         .focused(true)
         .build()
         .expect("Failed to create settings window");
+    }
+}
+
+/// Opens the history window if it doesn't exist, or focuses it if it does.
+fn toggle_history_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("history") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        let _window = tauri::WebviewWindowBuilder::new(
+            app,
+            "history",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("Transcription History")
+        .inner_size(480.0, 600.0)
+        .resizable(true)
+        .center()
+        .visible(true)
+        .focused(true)
+        .build()
+        .expect("Failed to create history window");
     }
 }

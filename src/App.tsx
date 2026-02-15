@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Overlay } from "./components/Overlay";
 import { ModelSettings } from "./components/ModelSettings";
+import { HistoryView } from "./components/HistoryView";
 import { useDictationState } from "./hooks/useDictationState";
 
 function App() {
@@ -16,6 +17,10 @@ function App() {
 
   if (windowLabel === "settings") {
     return <ModelSettings />;
+  }
+
+  if (windowLabel === "history") {
+    return <HistoryView />;
   }
 
   return (

@@ -8,13 +8,36 @@ interface ModelInfo {
   description: string;
   downloaded: boolean;
   selected: boolean;
+  english_only: boolean;
 }
+
+const LANGUAGES = [
+  { code: "auto", label: "Auto-detect" },
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "zh", label: "Chinese" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "ru", label: "Russian" },
+  { code: "ar", label: "Arabic" },
+  { code: "hi", label: "Hindi" },
+  { code: "nl", label: "Dutch" },
+  { code: "pl", label: "Polish" },
+  { code: "tr", label: "Turkish" },
+  { code: "sv", label: "Swedish" },
+  { code: "uk", label: "Ukrainian" },
+];
 
 export function ModelSettings() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [smartPaste, setSmartPaste] = useState(true);
+  const [language, setLanguage] = useState("en");
 
   const fetchModels = async () => {
     try {
@@ -28,6 +51,7 @@ export function ModelSettings() {
   useEffect(() => {
     fetchModels();
     invoke<boolean>("get_smart_paste").then(setSmartPaste);
+    invoke<string>("get_language").then(setLanguage);
 
     const unlistenModel = listen("model-changed", () => {
       fetchModels();
@@ -38,6 +62,19 @@ export function ModelSettings() {
       unlistenModel.then((fn) => fn());
     };
   }, []);
+
+  const handleLanguageChange = async (newLang: string) => {
+    const oldLang = language;
+    setLanguage(newLang);
+    setError(null);
+    try {
+      await invoke("set_language", { language: newLang });
+      await fetchModels();
+    } catch (e) {
+      setLanguage(oldLang);
+      setError(String(e));
+    }
+  };
 
   const handleToggleSmartPaste = async () => {
     const newValue = !smartPaste;
@@ -63,15 +100,36 @@ export function ModelSettings() {
     }
   };
 
+  // Filter models based on selected language
+  const showEnglishOnly = language === "en";
+  const filteredModels = models.filter((m) =>
+    showEnglishOnly ? m.english_only : !m.english_only
+  );
+
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white p-6">
       <h1 className="text-lg font-semibold mb-1">Dictate Settings</h1>
       <p className="text-sm text-white/50 mb-4">
-        Choose your transcription model
+        Choose your language and transcription model
       </p>
 
+      <div className="mb-4">
+        <label className="text-sm font-medium mb-1.5 block">Language</label>
+        <select
+          value={language}
+          onChange={(e) => handleLanguageChange(e.target.value)}
+          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white appearance-none cursor-pointer hover:bg-white/10 transition-colors focus:outline-none focus:border-blue-500"
+        >
+          {LANGUAGES.map((lang) => (
+            <option key={lang.code} value={lang.code} className="bg-gray-900">
+              {lang.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div className="flex flex-col gap-2 flex-1 overflow-y-auto">
-        {models.map((model) => (
+        {filteredModels.map((model) => (
           <ModelCard
             key={model.name}
             model={model}

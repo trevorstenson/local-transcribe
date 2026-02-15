@@ -136,6 +136,7 @@ pub fn paste_text(text: &str, smart_paste: bool) -> Result<()> {
     if should_auto_paste {
         // Text field is focused — auto-paste and restore clipboard
         let previous_text = clipboard.get_text().ok();
+        let previous_image = clipboard.get_image().ok();
 
         clipboard
             .set_text(text)
@@ -159,14 +160,22 @@ pub fn paste_text(text: &str, smart_paste: bool) -> Result<()> {
         // Wait for the paste to be processed by the target application
         thread::sleep(Duration::from_millis(150));
 
-        // Restore previous clipboard contents
+        // Restore previous clipboard contents (text or image)
         if let Ok(mut cb) = Clipboard::new() {
-            match previous_text {
-                Some(ref prev) if !prev.is_empty() => {
+            match &previous_text {
+                Some(prev) if !prev.is_empty() => {
                     let _ = cb.set_text(prev);
                 }
                 _ => {
-                    let _ = cb.clear();
+                    if let Some(img) = &previous_image {
+                        let _ = cb.set_image(arboard::ImageData {
+                            width: img.width,
+                            height: img.height,
+                            bytes: img.bytes.clone(),
+                        });
+                    } else {
+                        let _ = cb.clear();
+                    }
                 }
             }
         }
