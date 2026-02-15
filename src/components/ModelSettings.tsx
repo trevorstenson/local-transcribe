@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 
 interface ModelInfo {
   name: string;
@@ -37,6 +38,7 @@ export function ModelSettings() {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [smartPaste, setSmartPaste] = useState(true);
+  const [autostart, setAutostart] = useState(false);
   const [language, setLanguage] = useState("en");
 
   const fetchModels = async () => {
@@ -52,6 +54,7 @@ export function ModelSettings() {
     fetchModels();
     invoke<boolean>("get_smart_paste").then(setSmartPaste);
     invoke<string>("get_language").then(setLanguage);
+    isEnabled().then(setAutostart).catch(() => {});
 
     const unlistenModel = listen("model-changed", () => {
       fetchModels();
@@ -72,6 +75,21 @@ export function ModelSettings() {
       await fetchModels();
     } catch (e) {
       setLanguage(oldLang);
+      setError(String(e));
+    }
+  };
+
+  const handleToggleAutostart = async () => {
+    const newValue = !autostart;
+    setAutostart(newValue);
+    try {
+      if (newValue) {
+        await enable();
+      } else {
+        await disable();
+      }
+    } catch (e) {
+      setAutostart(!newValue);
       setError(String(e));
     }
   };
@@ -140,7 +158,7 @@ export function ModelSettings() {
         ))}
       </div>
 
-      <div className="mt-4 pt-4 border-t border-white/10">
+      <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
         <button
           onClick={handleToggleSmartPaste}
           className="flex items-center justify-between w-full"
@@ -156,6 +174,27 @@ export function ModelSettings() {
           <div
             className={`w-9 h-5 rounded-full transition-colors flex items-center ${
               smartPaste ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
+            }`}
+          >
+            <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
+          </div>
+        </button>
+
+        <button
+          onClick={handleToggleAutostart}
+          className="flex items-center justify-between w-full"
+        >
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-medium">Launch at Login</span>
+            <span className="text-xs text-white/40">
+              {autostart
+                ? "Dictate starts automatically when you log in"
+                : "Dictate must be started manually"}
+            </span>
+          </div>
+          <div
+            className={`w-9 h-5 rounded-full transition-colors flex items-center ${
+              autostart ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
             }`}
           >
             <div className="w-4 h-4 bg-white rounded-full mx-0.5" />

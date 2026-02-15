@@ -884,6 +884,10 @@ pub fn run() {
     let (req_tx, resp_rx, partial_rx) = transcription::whisper::spawn_transcription_thread();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(shared_state)
         .manage(TranscriptionSender(std::sync::Mutex::new(req_tx)))
         .manage(TranscriptionReceiver(std::sync::Mutex::new(resp_rx)))
