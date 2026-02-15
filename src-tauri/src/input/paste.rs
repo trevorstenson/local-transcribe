@@ -4,10 +4,14 @@ use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::thread;
 use std::time::Duration;
 
-/// Writes text to the clipboard and simulates Cmd+V to paste it.
+/// Writes text to the clipboard, simulates Cmd+V to paste it,
+/// then restores the original clipboard contents.
 pub fn paste_text(text: &str) -> Result<()> {
     let mut clipboard = Clipboard::new()
         .map_err(|e| anyhow::anyhow!("Failed to access clipboard: {}", e))?;
+
+    // Save current clipboard text before overwriting
+    let previous_text = clipboard.get_text().ok();
 
     clipboard
         .set_text(text)
@@ -27,6 +31,21 @@ pub fn paste_text(text: &str) -> Result<()> {
     enigo
         .key(Key::Meta, Direction::Release)
         .map_err(|e| anyhow::anyhow!("Failed to release Meta key: {}", e))?;
+
+    // Wait for the paste to be processed by the target application
+    thread::sleep(Duration::from_millis(150));
+
+    // Restore previous clipboard contents
+    if let Ok(mut cb) = Clipboard::new() {
+        match previous_text {
+            Some(ref prev) if !prev.is_empty() => {
+                let _ = cb.set_text(prev);
+            }
+            _ => {
+                let _ = cb.clear();
+            }
+        }
+    }
 
     Ok(())
 }

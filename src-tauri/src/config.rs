@@ -3,16 +3,24 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const DEFAULT_HOTKEY: &str = "alt+space";
+const DEFAULT_MODEL: &str = "base.en";
+
+fn default_model() -> String {
+    DEFAULT_MODEL.to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub hotkey: String,
+    #[serde(default = "default_model")]
+    pub selected_model: String,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             hotkey: DEFAULT_HOTKEY.to_string(),
+            selected_model: default_model(),
         }
     }
 }

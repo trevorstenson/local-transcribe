@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.10", features = ["macos-private-api"] }
+tauri = { version = "2.10", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2.3"
 whisper-rs = { version = "0.15", features = ["metal"] }
 cpal = "0.17"
