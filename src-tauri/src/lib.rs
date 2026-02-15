@@ -62,6 +62,27 @@ fn emit_state(app_handle: &tauri::AppHandle, dictation_state: &DictationState) {
     let _ = app_handle.emit("dictation-state", payload);
 }
 
+/// Registers fallback shortcuts for opening windows when the tray icon is hidden by macOS.
+fn register_fallback_shortcuts(app: &tauri::AppHandle) {
+    let gs = app.global_shortcut();
+
+    if let Err(e) = gs.on_shortcut("cmd+alt+,", |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            tray::show_settings_window(app);
+        }
+    }) {
+        log::warn!("Failed to register fallback settings shortcut: {}", e);
+    }
+
+    if let Err(e) = gs.on_shortcut("cmd+alt+h", |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            tray::show_history_window(app);
+        }
+    }) {
+        log::warn!("Failed to register fallback history shortcut: {}", e);
+    }
+}
+
 /// Toggles recording based on the current dictation state.
 fn toggle_recording(app_handle: &tauri::AppHandle) {
     let shared_state = app_handle.state::<SharedState>();
@@ -1106,6 +1127,9 @@ pub fn run() {
                     })
                     .build(),
             )?;
+
+            // Register fallback window shortcuts for small-screen menu bar overflow.
+            register_fallback_shortcuts(&app.handle());
 
             // Set up system tray icon
             tray::setup_tray(app)?;

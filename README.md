@@ -42,6 +42,10 @@ Notes:
 
 Open the menu bar icon and click `Settings...` to change hotkey, model, and Smart Paste.
 
+If the menu bar icon is hidden on smaller displays, use:
+- `Command+Option+,` to open Settings
+- `Command+Option+H` to open History
+
 ## Models
 
 English models currently available:
