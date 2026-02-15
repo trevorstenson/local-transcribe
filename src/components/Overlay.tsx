@@ -7,6 +7,8 @@ import { useAudioLevels } from "../hooks/useAudioLevels";
 import { AudioWaveform } from "./AudioWaveform";
 import { Settings } from "./Settings";
 
+const CORRECTION_AUTO_DISMISS_MS = 3000;
+
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -34,6 +36,72 @@ export function Overlay({ state }: OverlayProps) {
       textRef.current.scrollTop = textRef.current.scrollHeight;
     }
   }, [partialText]);
+
+  // CorrectionPreview: auto-dismiss timer with progress tracking
+  const [previewProgress, setPreviewProgress] = useState(0);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewAnimRef = useRef<number | null>(null);
+  const previewStartRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (state.type !== "CorrectionPreview") {
+      setPreviewProgress(0);
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
+      if (previewAnimRef.current) {
+        cancelAnimationFrame(previewAnimRef.current);
+        previewAnimRef.current = null;
+      }
+      return;
+    }
+
+    previewStartRef.current = Date.now();
+
+    const animate = () => {
+      const elapsed = Date.now() - previewStartRef.current;
+      const progress = Math.min(elapsed / CORRECTION_AUTO_DISMISS_MS, 1);
+      setPreviewProgress(progress);
+      if (progress < 1) {
+        previewAnimRef.current = requestAnimationFrame(animate);
+      }
+    };
+    previewAnimRef.current = requestAnimationFrame(animate);
+
+    previewTimerRef.current = setTimeout(() => {
+      invoke("accept_corrections");
+    }, CORRECTION_AUTO_DISMISS_MS);
+
+    return () => {
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
+      if (previewAnimRef.current) {
+        cancelAnimationFrame(previewAnimRef.current);
+        previewAnimRef.current = null;
+      }
+    };
+  }, [state.type]);
+
+  // CorrectionPreview: keyboard event listeners
+  useEffect(() => {
+    if (state.type !== "CorrectionPreview") return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        invoke("undo_corrections");
+      } else if (e.key === "Enter") {
+        invoke("accept_corrections");
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [state.type]);
 
   const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -90,6 +158,14 @@ export function Overlay({ state }: OverlayProps) {
     return null;
   }
 
+  const isPreview = state.type === "CorrectionPreview";
+  const displayedCorrections = isPreview
+    ? state.corrections.slice(0, 5)
+    : [];
+  const remainingCount = isPreview
+    ? Math.max(0, state.corrections.length - 5)
+    : 0;
+
   return (
     <div
       className="flex flex-col items-center gap-2 cursor-grab active:cursor-grabbing"
@@ -97,67 +173,99 @@ export function Overlay({ state }: OverlayProps) {
     >
       {state.type !== "Idle" && (
         <div className="flex flex-col gap-2 px-5 py-3 bg-black/80 backdrop-blur-xl rounded-2xl border border-white/10 max-w-[300px]">
-          <div className="flex items-center gap-3">
-            {state.type === "Recording" && (
-              <>
-                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-                <span className="text-white/40 text-sm font-medium tabular-nums">
-                  {formatDuration(state.duration_ms)}
-                </span>
-                <span className="text-white/70 text-sm font-medium">
-                  {state.partial_text ? "Transcribing..." : "Listening..."}
-                </span>
-              </>
-            )}
+          {!isPreview && (
+            <div className="flex items-center gap-3">
+              {state.type === "Recording" && (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                  <span className="text-white/40 text-sm font-medium tabular-nums">
+                    {formatDuration(state.duration_ms)}
+                  </span>
+                  <span className="text-white/70 text-sm font-medium">
+                    {state.partial_text ? "Transcribing..." : "Listening..."}
+                  </span>
+                </>
+              )}
 
-            {state.type === "Processing" && (
-              <>
-                <div className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-                <span className="text-blue-400 text-sm font-medium">Transcribing...</span>
-              </>
-            )}
+              {state.type === "Processing" && (
+                <>
+                  <div className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                  <span className="text-blue-400 text-sm font-medium">Transcribing...</span>
+                </>
+              )}
 
-            {state.type === "Downloading" && (
-              <>
-                <div className="w-3 h-3 rounded-full border-2 border-green-400 border-t-transparent animate-spin" />
-                <span className="text-green-400 text-sm font-medium">
-                  Downloading model... {Math.round(state.progress * 100)}%
-                </span>
-              </>
-            )}
+              {state.type === "Downloading" && (
+                <>
+                  <div className="w-3 h-3 rounded-full border-2 border-green-400 border-t-transparent animate-spin" />
+                  <span className="text-green-400 text-sm font-medium">
+                    Downloading model... {Math.round(state.progress * 100)}%
+                  </span>
+                </>
+              )}
 
-            {state.type === "Error" && (
-              <>
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-                <span className="text-yellow-400 text-sm font-medium">{state.message}</span>
-              </>
-            )}
+              {state.type === "Error" && (
+                <>
+                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+                  <span className="text-yellow-400 text-sm font-medium">{state.message}</span>
+                </>
+              )}
 
-            <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-              <button
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setShowSettings(!showSettings)}
-                className="text-white/30 hover:text-white/70 transition-colors"
-                title="Settings"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              </button>
-              <button
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => invoke("cancel_recording")}
-                className="text-white/30 hover:text-white/70 transition-colors"
-                title="Cancel"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
+              <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => setShowSettings(!showSettings)}
+                  className="text-white/30 hover:text-white/70 transition-colors"
+                  title="Settings"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+                <button
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => invoke("cancel_recording")}
+                  className="text-white/30 hover:text-white/70 transition-colors"
+                  title="Cancel"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {isPreview && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+                <span className="text-green-400 text-sm font-medium">Corrected</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                {displayedCorrections.map((c, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-xs">
+                    <span className="text-white/40 line-through">{c.original}</span>
+                    <span className="text-white/30">→</span>
+                    <span className="text-green-400">{c.replacement}</span>
+                  </div>
+                ))}
+                {remainingCount > 0 && (
+                  <span className="text-white/30 text-xs">+{remainingCount} more</span>
+                )}
+              </div>
+              <div className="w-full h-0.5 bg-white/10 rounded-full overflow-hidden mt-1">
+                <div
+                  className="h-full bg-green-400/60 rounded-full transition-none"
+                  style={{ width: `${(1 - previewProgress) * 100}%` }}
+                />
+              </div>
+              <span className="text-white/25 text-[10px] text-center">
+                Enter to accept · Esc to undo
+              </span>
+            </div>
+          )}
 
           {state.type === "Recording" && (
             <AudioWaveform levels={audioLevels} />
