@@ -14,6 +14,7 @@ export function ModelSettings() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [smartPaste, setSmartPaste] = useState(true);
 
   const fetchModels = async () => {
     try {
@@ -26,6 +27,7 @@ export function ModelSettings() {
 
   useEffect(() => {
     fetchModels();
+    invoke<boolean>("get_smart_paste").then(setSmartPaste);
 
     const unlistenModel = listen("model-changed", () => {
       fetchModels();
@@ -36,6 +38,17 @@ export function ModelSettings() {
       unlistenModel.then((fn) => fn());
     };
   }, []);
+
+  const handleToggleSmartPaste = async () => {
+    const newValue = !smartPaste;
+    setSmartPaste(newValue);
+    try {
+      await invoke("set_smart_paste", { enabled: newValue });
+    } catch (e) {
+      setSmartPaste(!newValue);
+      setError(String(e));
+    }
+  };
 
   const handleSelectModel = async (modelName: string) => {
     setLoading(modelName);
@@ -67,6 +80,29 @@ export function ModelSettings() {
             onSelect={() => handleSelectModel(model.name)}
           />
         ))}
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-white/10">
+        <button
+          onClick={handleToggleSmartPaste}
+          className="flex items-center justify-between w-full"
+        >
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-medium">Smart Paste</span>
+            <span className="text-xs text-white/40">
+              {smartPaste
+                ? "Only auto-pastes when a text field is focused"
+                : "Always tries to paste immediately"}
+            </span>
+          </div>
+          <div
+            className={`w-9 h-5 rounded-full transition-colors flex items-center ${
+              smartPaste ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
+            }`}
+          >
+            <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
+          </div>
+        </button>
       </div>
 
       {error && <div className="mt-3 text-red-400 text-sm">{error}</div>}

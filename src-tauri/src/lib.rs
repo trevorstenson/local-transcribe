@@ -205,8 +205,9 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                             // (macOS requires AppKit/HID calls on the main thread)
                             let app_for_paste = app_handle_clone.clone();
                             let text_to_paste = trimmed.clone();
+                            let smart_paste = app_handle_clone.state::<SharedState>().lock().smart_paste;
                             let _ = app_handle_clone.run_on_main_thread(move || {
-                                if let Err(e) = input::paste::paste_text(&text_to_paste) {
+                                if let Err(e) = input::paste::paste_text(&text_to_paste, smart_paste) {
                                     log::error!("Failed to paste text: {}", e);
                                     let error_state = DictationState::Error {
                                         message: format!("Failed to paste: {}", e),
@@ -393,15 +394,16 @@ fn set_hotkey(
         format!("Failed to register new hotkey '{}': {}", new_hotkey, e)
     })?;
 
-    // Save to config (preserve selected_model)
-    let selected_model = {
+    // Save to config (preserve other settings)
+    let (selected_model, smart_paste) = {
         let shared_state = app.state::<SharedState>();
         let state = shared_state.lock();
-        state.selected_model.clone()
+        (state.selected_model.clone(), state.smart_paste)
     };
     let cfg = config::AppConfig {
         hotkey: new_hotkey.clone(),
         selected_model,
+        smart_paste,
     };
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
@@ -456,9 +458,11 @@ async fn select_model(app: tauri::AppHandle, model_name: String) -> Result<(), S
 
     // Persist to config
     let hotkey = app.state::<CurrentHotkey>().0.lock().unwrap().clone();
+    let smart_paste = app.state::<SharedState>().lock().smart_paste;
     let cfg = config::AppConfig {
         hotkey,
         selected_model: model_name.clone(),
+        smart_paste,
     };
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
@@ -472,6 +476,38 @@ async fn select_model(app: tauri::AppHandle, model_name: String) -> Result<(), S
 
     // Emit event so the settings UI can refresh
     let _ = app.emit("model-changed", ());
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_smart_paste(shared_state: tauri::State<'_, SharedState>) -> bool {
+    shared_state.lock().smart_paste
+}
+
+#[tauri::command]
+fn set_smart_paste(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    // Update in-memory state
+    {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.smart_paste = enabled;
+    }
+
+    // Persist to config
+    let shared_state = app.state::<SharedState>();
+    let state = shared_state.lock();
+    let hotkey = app.state::<CurrentHotkey>().0.lock().unwrap().clone();
+    let cfg = config::AppConfig {
+        hotkey,
+        selected_model: state.selected_model.clone(),
+        smart_paste: state.smart_paste,
+    };
+    drop(state);
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
     Ok(())
 }
@@ -527,12 +563,14 @@ pub fn run() {
     let app_config = config::load_config();
     let hotkey = app_config.hotkey.clone();
     let selected_model = app_config.selected_model.clone();
+    let smart_paste = app_config.smart_paste;
 
-    // Create shared state with persisted model selection
+    // Create shared state with persisted settings
     let shared_state: SharedState = Arc::new(parking_lot::Mutex::new(state::AppState {
         dictation_state: DictationState::Idle,
         model_path: None,
         selected_model,
+        smart_paste,
     }));
 
     // Spawn transcription thread
@@ -544,7 +582,7 @@ pub fn run() {
         .manage(TranscriptionReceiver(std::sync::Mutex::new(resp_rx)))
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model])
+        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
