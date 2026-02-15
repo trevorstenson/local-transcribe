@@ -21,6 +21,7 @@ pub struct AppState {
     pub dictation_state: DictationState,
     pub model_path: Option<String>,
     pub selected_model: String,
+    pub smart_paste: bool,
 }
 
 impl Default for AppState {
@@ -29,6 +30,7 @@ impl Default for AppState {
             dictation_state: DictationState::Idle,
             model_path: None,
             selected_model: String::from("base.en"),
+            smart_paste: true,
         }
     }
 }

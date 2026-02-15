@@ -14,6 +14,12 @@ pub struct AppConfig {
     pub hotkey: String,
     #[serde(default = "default_model")]
     pub selected_model: String,
+    #[serde(default = "default_true")]
+    pub smart_paste: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AppConfig {
@@ -21,6 +27,7 @@ impl Default for AppConfig {
         Self {
             hotkey: DEFAULT_HOTKEY.to_string(),
             selected_model: default_model(),
+            smart_paste: true,
         }
     }
 }

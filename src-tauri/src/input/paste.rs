@@ -124,13 +124,16 @@ fn is_text_field_focused() -> bool {
     true
 }
 
-/// Pastes transcribed text. If a text field is focused, simulates Cmd+V and
-/// restores the original clipboard. Otherwise, just saves to clipboard.
-pub fn paste_text(text: &str) -> Result<()> {
+/// Pastes transcribed text. When smart_paste is true, checks if a text field
+/// is focused first — auto-pastes if so, otherwise saves to clipboard.
+/// When smart_paste is false, always attempts immediate paste.
+pub fn paste_text(text: &str, smart_paste: bool) -> Result<()> {
     let mut clipboard = Clipboard::new()
         .map_err(|e| anyhow::anyhow!("Failed to access clipboard: {}", e))?;
 
-    if is_text_field_focused() {
+    let should_auto_paste = !smart_paste || is_text_field_focused();
+
+    if should_auto_paste {
         // Text field is focused — auto-paste and restore clipboard
         let previous_text = clipboard.get_text().ok();
 
