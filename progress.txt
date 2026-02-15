@@ -29,6 +29,8 @@
 - App config stored at `~/Library/Application Support/com.dictate.app/config.json` — use `config::load_config()` / `config::save_config()`
 - Tauri v2 global shortcut runtime management: `use tauri_plugin_global_shortcut::GlobalShortcutExt;` then `app.global_shortcut().unregister(key)` / `.on_shortcut(key, handler)` / `.is_registered(key)`. Requires `&str` not `&String`.
 - Tauri commands: `#[tauri::command] fn name(...)`, register with `.invoke_handler(tauri::generate_handler![cmd1, cmd2])`. Commands returning `Result<T, String>` auto-serialize errors to frontend.
+- Tauri v2 `core:default` capability covers custom invoke commands — no extra permissions needed in capabilities/default.json for `invoke()` calls
+- Frontend invoke: `import { invoke } from "@tauri-apps/api/core"` — use `invoke<ReturnType>("command_name", { argName: value })`, args auto-convert camelCase→snake_case
 ---
 
 ## 2026-02-14 - US-001
@@ -207,4 +209,18 @@
   - `set_hotkey` implements rollback: if new shortcut registration fails, re-registers the old one
   - Tauri commands returning `Result<T, String>` auto-serialize — use `.map_err(|e| format!(...))` for error conversion
   - `setup` closure needs `move` keyword when capturing variables (like the hotkey string) from outside scope
+---
+
+## 2026-02-14 - US-013
+- Added hotkey settings UI accessible via gear icon in the overlay
+- `src/components/Settings.tsx`: Settings panel component — fetches current hotkey via `get_hotkey` Tauri command on mount, text input for new hotkey, save button calls `set_hotkey` command, shows success/error feedback
+- `src/components/Overlay.tsx`: Updated to include gear icon button (SVG) visible in all non-Idle states, toggles settings panel visibility. Settings panel renders below the main overlay pill. Also keeps rendering if settings is open even when Idle.
+- No changes to App.tsx needed — Overlay manages settings state internally via useState
+- No capabilities/default.json changes needed — `core:default` covers custom Tauri invoke commands
+- Files changed: 2 (1 new Settings.tsx + Overlay.tsx modified)
+- **Learnings for future iterations:**
+  - `@tauri-apps/api/core` `invoke<T>(command, args?)` for calling Tauri commands — args must match Rust parameter names (camelCase maps to snake_case automatically)
+  - Tauri v2 `core:default` capability covers custom invoke commands — no additional permission entries needed in capabilities/default.json
+  - Overlay window is 280x120 — settings panel must be compact; w-64 (256px) fits within the window width
+  - The overlay returns null for Idle state unless settings is open — need to check both conditions to keep settings accessible
 ---

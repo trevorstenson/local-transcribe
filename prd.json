@@ -232,8 +232,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Settings panel integrated into Overlay component with gear icon. Uses @tauri-apps/api/core invoke() to call get_hotkey/set_hotkey commands. No additional capabilities needed — core:default covers custom invoke commands. Input field for new hotkey string with save button, success/error feedback."
     }
   ]
 }
