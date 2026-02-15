@@ -58,6 +58,22 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
 
     match current_state {
         DictationState::Idle => {
+            // Re-check accessibility permission before starting recording
+            if !input::paste::check_accessibility_permission() {
+                let error_state = DictationState::Error {
+                    message: "Accessibility access needed — check System Settings > Privacy > Accessibility".to_string(),
+                };
+                {
+                    let mut state = shared_state.lock();
+                    state.dictation_state = error_state.clone();
+                }
+                emit_state(app_handle, &error_state);
+                if let Some(window) = app_handle.get_webview_window("overlay") {
+                    let _ = window.show();
+                }
+                return;
+            }
+
             // Start recording
             match audio::capture::AudioCapture::new() {
                 Ok(mut capture) => match capture.start_recording() {
@@ -88,10 +104,32 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                     }
                     Err(e) => {
                         log::error!("Failed to start recording: {}", e);
+                        let error_state = DictationState::Error {
+                            message: "Microphone access needed — check System Settings > Privacy > Microphone".to_string(),
+                        };
+                        {
+                            let mut state = shared_state.lock();
+                            state.dictation_state = error_state.clone();
+                        }
+                        emit_state(app_handle, &error_state);
+                        if let Some(window) = app_handle.get_webview_window("overlay") {
+                            let _ = window.show();
+                        }
                     }
                 },
                 Err(e) => {
                     log::error!("Failed to create audio capture: {}", e);
+                    let error_state = DictationState::Error {
+                        message: "Microphone access needed — check System Settings > Privacy > Microphone".to_string(),
+                    };
+                    {
+                        let mut state = shared_state.lock();
+                        state.dictation_state = error_state.clone();
+                    }
+                    emit_state(app_handle, &error_state);
+                    if let Some(window) = app_handle.get_webview_window("overlay") {
+                        let _ = window.show();
+                    }
                 }
             }
         }
@@ -384,6 +422,23 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("overlay") {
                 make_window_non_activating(&window);
+            }
+
+            // Check accessibility permission on startup
+            if !input::paste::check_accessibility_permission() {
+                let app_handle = app.handle().clone();
+                let error_state = DictationState::Error {
+                    message: "Accessibility access needed — check System Settings > Privacy > Accessibility".to_string(),
+                };
+                let shared_state = app_handle.state::<SharedState>();
+                {
+                    let mut state = shared_state.lock();
+                    state.dictation_state = error_state.clone();
+                }
+                emit_state(&app_handle, &error_state);
+                if let Some(window) = app_handle.get_webview_window("overlay") {
+                    let _ = window.show();
+                }
             }
 
             // Download/load model on startup in a background thread
