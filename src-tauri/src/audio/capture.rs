@@ -101,6 +101,14 @@ impl AudioCapture {
         resampler::resample(&buffer, self.device_sample_rate, 16000)
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.device_sample_rate
+    }
+
+    pub fn buffer(&self) -> &Arc<Mutex<Vec<f32>>> {
+        &self.buffer
+    }
+
     pub fn stop_recording(&mut self) -> Vec<f32> {
         // Drop the stream to stop recording
         self.stream = None;
