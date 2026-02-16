@@ -10,8 +10,12 @@ Transcription runs on-device with Whisper (`whisper-rs` + Metal).
 - Global hotkey to start/stop recording (default: `Option+Space`)
 - Floating status overlay while recording/transcribing/downloading
 - Auto-download and switch between Whisper models
+- Language selection (including auto-detect) with English/multilingual model switching
 - Smart Paste mode: if a text field is focused, Wren pastes immediately; otherwise it copies text to your clipboard
-- Menu bar settings for hotkey, model, and Smart Paste
+- Personal vocabulary corrections with preview + accept/undo
+- Local transcription history
+- Menu bar settings for hotkey, model, language, vocabulary, and translation options
+- Experimental translation preview flow (currently scaffolded; see Scope)
 
 ## Installing a Release
 
@@ -52,7 +56,7 @@ Notes:
 4. Press `Option+Space` again to stop.
 5. Wren transcribes and pastes (or copies to clipboard when Smart Paste blocks auto-paste).
 
-Open the menu bar icon and click `Settings...` to change hotkey, model, and Smart Paste.
+Open the menu bar icon and click `Settings...` to change hotkey, model, language, Smart Paste, vocabulary, and translation target.
 
 If the menu bar icon is hidden on smaller displays, use:
 - `Command+Option+,` to open Settings
@@ -60,18 +64,23 @@ If the menu bar icon is hidden on smaller displays, use:
 
 ## Models
 
-English models currently available:
+Whisper models currently available:
 
 - `tiny.en` (~78 MB): fastest, least accurate
+- `tiny` (~78 MB): fastest, least accurate (multilingual)
 - `base.en` (~148 MB): default, balanced
+- `base` (~148 MB): default multilingual, balanced
 - `small.en` (~488 MB): more accurate, slower
+- `small` (~488 MB): more accurate, slower (multilingual)
 - `medium.en` (~1.5 GB): most accurate, slowest
+- `medium` (~1.5 GB): most accurate, slowest (multilingual)
 - `base.en-q8_0` (~82 MB): quantized base model, good speed/quality tradeoff
 
 ## Paths
 
 - Config: `~/Library/Application Support/com.wren.app/config.json`
 - Models: `~/Library/Application Support/com.wren.app/models/`
+- Translation model cache root: `~/Library/Application Support/com.wren.app/models/nllb/`
 
 ## Build A Release
 
@@ -114,7 +123,8 @@ Versioned builds and release notes are published on the repository's **Releases*
 ## Scope
 
 - macOS-focused
-- English Whisper models (`*.en`) only
+- Whisper transcription supports English and multilingual models
+- Translation UI/pipeline is scaffolded, but backend translation is currently passthrough
 - No cloud transcription
 
 ## License
