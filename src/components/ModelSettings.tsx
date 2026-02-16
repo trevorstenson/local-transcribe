@@ -33,6 +33,7 @@ const LANGUAGES = [
   { code: "sv", label: "Swedish" },
   { code: "uk", label: "Ukrainian" },
 ];
+const TARGET_LANGUAGES = LANGUAGES.filter((lang) => lang.code !== "auto");
 
 export function ModelSettings() {
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -41,6 +42,8 @@ export function ModelSettings() {
   const [smartPaste, setSmartPaste] = useState(true);
   const [autostart, setAutostart] = useState(false);
   const [language, setLanguage] = useState("en");
+  const [translationEnabled, setTranslationEnabled] = useState(false);
+  const [translationTargetLang, setTranslationTargetLang] = useState("en");
   const [vocabEnabled, setVocabEnabled] = useState<boolean>(true);
   const [showVocabModal, setShowVocabModal] = useState(false);
 
@@ -57,6 +60,8 @@ export function ModelSettings() {
     fetchModels();
     invoke<boolean>("get_smart_paste").then(setSmartPaste);
     invoke<string>("get_language").then(setLanguage);
+    invoke<boolean>("get_translation_enabled").then(setTranslationEnabled);
+    invoke<string>("get_translation_target_lang").then(setTranslationTargetLang);
     invoke<boolean>("get_vocab_enabled").then(setVocabEnabled);
     isEnabled().then(setAutostart).catch(() => {});
 
@@ -120,6 +125,28 @@ export function ModelSettings() {
     }
   };
 
+  const handleToggleTranslation = async () => {
+    const newValue = !translationEnabled;
+    setTranslationEnabled(newValue);
+    try {
+      await invoke("set_translation_enabled", { enabled: newValue });
+    } catch (e) {
+      setTranslationEnabled(!newValue);
+      setError(String(e));
+    }
+  };
+
+  const handleTranslationTargetChange = async (newTarget: string) => {
+    const oldTarget = translationTargetLang;
+    setTranslationTargetLang(newTarget);
+    try {
+      await invoke("set_translation_target_lang", { targetLang: newTarget });
+    } catch (e) {
+      setTranslationTargetLang(oldTarget);
+      setError(String(e));
+    }
+  };
+
   const handleSelectModel = async (modelName: string) => {
     setLoading(modelName);
     setError(null);
@@ -174,6 +201,43 @@ export function ModelSettings() {
       </div>
 
       <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3 shrink-0">
+        <button
+          onClick={handleToggleTranslation}
+          className="flex items-center justify-between w-full"
+        >
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-medium">Enable Translation</span>
+            <span className="text-xs text-white/40">
+              {translationEnabled
+                ? "Shows translation preview before pasting"
+                : "Use regular transcription without translation"}
+            </span>
+          </div>
+          <div
+            className={`w-9 h-5 rounded-full transition-colors flex items-center ${
+              translationEnabled ? "bg-blue-500 justify-end" : "bg-white/20 justify-start"
+            }`}
+          >
+            <div className="w-4 h-4 bg-white rounded-full mx-0.5" />
+          </div>
+        </button>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs text-white/50">Translation Target</label>
+          <select
+            value={translationTargetLang}
+            onChange={(e) => handleTranslationTargetChange(e.target.value)}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white appearance-none cursor-pointer hover:bg-white/10 transition-colors focus:outline-none focus:border-blue-500 disabled:opacity-50"
+            disabled={!translationEnabled}
+          >
+            {TARGET_LANGUAGES.map((lang) => (
+              <option key={lang.code} value={lang.code} className="bg-gray-900">
+                {lang.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <button
           onClick={handleToggleSmartPaste}
           className="flex items-center justify-between w-full"

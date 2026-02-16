@@ -1,3 +1,4 @@
+use crate::translation::model_manager::DEFAULT_TRANSLATION_MODEL;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -5,6 +6,7 @@ use std::path::PathBuf;
 const DEFAULT_HOTKEY: &str = "alt+space";
 const DEFAULT_MODEL: &str = "base.en";
 const DEFAULT_LANGUAGE: &str = "en";
+const DEFAULT_TRANSLATION_TARGET_LANG: &str = "en";
 
 fn default_model() -> String {
     DEFAULT_MODEL.to_string()
@@ -12,6 +14,14 @@ fn default_model() -> String {
 
 fn default_language() -> String {
     DEFAULT_LANGUAGE.to_string()
+}
+
+fn default_translation_target_lang() -> String {
+    DEFAULT_TRANSLATION_TARGET_LANG.to_string()
+}
+
+fn default_translation_model() -> String {
+    DEFAULT_TRANSLATION_MODEL.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +39,12 @@ pub struct AppConfig {
     pub language: String,
     #[serde(default = "default_true")]
     pub vocab_enabled: bool,
+    #[serde(default)]
+    pub translation_enabled: bool,
+    #[serde(default = "default_translation_target_lang")]
+    pub translation_target_lang: String,
+    #[serde(default = "default_translation_model")]
+    pub translation_model: String,
 }
 
 fn default_true() -> bool {
@@ -45,6 +61,9 @@ impl Default for AppConfig {
             overlay_y: None,
             language: default_language(),
             vocab_enabled: true,
+            translation_enabled: false,
+            translation_target_lang: default_translation_target_lang(),
+            translation_model: default_translation_model(),
         }
     }
 }
@@ -52,9 +71,7 @@ impl Default for AppConfig {
 /// Returns the path to config.json in the app's data directory.
 fn config_path() -> PathBuf {
     let data_dir = dirs::data_dir().expect("Failed to get data directory");
-    data_dir
-        .join("com.wren.app")
-        .join("config.json")
+    data_dir.join("com.wren.app").join("config.json")
 }
 
 /// Reads the config from disk. Returns default config if file doesn't exist or is invalid.

@@ -54,11 +54,7 @@ fn is_text_field_focused() -> bool {
         unsafe {
             let ptr = CFStringGetCStringPtr(cf, K_CF_STRING_ENCODING_UTF8);
             if !ptr.is_null() {
-                return Some(
-                    std::ffi::CStr::from_ptr(ptr)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+                return Some(std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned());
             }
             let len = CFStringGetLength(cf);
             let mut buf = vec![0u8; (len * 4 + 1) as usize];
@@ -87,8 +83,7 @@ fn is_text_field_focused() -> bool {
 
         let focused_attr = make_cfstring("AXFocusedUIElement");
         let mut focused: CFTypeRef = ptr::null();
-        let err =
-            AXUIElementCopyAttributeValue(system_wide, focused_attr, &mut focused);
+        let err = AXUIElementCopyAttributeValue(system_wide, focused_attr, &mut focused);
         CFRelease(system_wide as CFTypeRef);
         CFRelease(focused_attr as CFTypeRef);
 
@@ -98,8 +93,7 @@ fn is_text_field_focused() -> bool {
 
         let role_attr = make_cfstring("AXRole");
         let mut role: CFTypeRef = ptr::null();
-        let err =
-            AXUIElementCopyAttributeValue(focused as AXUIElementRef, role_attr, &mut role);
+        let err = AXUIElementCopyAttributeValue(focused as AXUIElementRef, role_attr, &mut role);
         CFRelease(focused);
         CFRelease(role_attr as CFTypeRef);
 
@@ -112,9 +106,7 @@ fn is_text_field_focused() -> bool {
 
         matches!(
             role_string.as_deref(),
-            Some(
-                "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField" | "AXWebArea"
-            )
+            Some("AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField" | "AXWebArea")
         )
     }
 }
@@ -128,8 +120,8 @@ fn is_text_field_focused() -> bool {
 /// is focused first — auto-pastes if so, otherwise saves to clipboard.
 /// When smart_paste is false, always attempts immediate paste.
 pub fn paste_text(text: &str, smart_paste: bool) -> Result<()> {
-    let mut clipboard = Clipboard::new()
-        .map_err(|e| anyhow::anyhow!("Failed to access clipboard: {}", e))?;
+    let mut clipboard =
+        Clipboard::new().map_err(|e| anyhow::anyhow!("Failed to access clipboard: {}", e))?;
 
     let should_auto_paste = !smart_paste || is_text_field_focused();
 

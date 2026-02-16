@@ -3,8 +3,9 @@ mod config;
 mod history;
 mod input;
 mod state;
-mod tray;
 mod transcription;
+mod translation;
+mod tray;
 mod vocabulary;
 
 use serde::Serialize;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use transcription::whisper::{TranscriptionRequest, TranscriptionResponse};
+use translation::engine::{TranslationJob, TranslationRequest, TranslationResponse};
 
 /// Makes the overlay window non-activating so it doesn't steal focus from the current app.
 #[cfg(target_os = "macos")]
@@ -50,9 +52,18 @@ pub struct ActiveCapture(pub std::sync::Mutex<Option<audio::capture::AudioCaptur
 pub struct StreamingActive(pub Arc<AtomicBool>);
 
 /// Wrapper for the partial transcription results channel.
-pub struct PartialTranscriptionReceiver(
-    pub std::sync::Mutex<std::sync::mpsc::Receiver<String>>,
+pub struct PartialTranscriptionReceiver(pub std::sync::Mutex<std::sync::mpsc::Receiver<String>>);
+
+/// Wrapper to store the translation channel sender as managed state.
+pub struct TranslationSender(pub std::sync::Mutex<std::sync::mpsc::Sender<TranslationRequest>>);
+
+/// Wrapper to store the translation channel receiver as managed state.
+pub struct TranslationReceiver(
+    pub std::sync::Mutex<std::sync::mpsc::Receiver<TranslationResponse>>,
 );
+
+/// Wrapper for the partial translation results channel.
+pub struct PartialTranslationReceiver(pub std::sync::Mutex<std::sync::mpsc::Receiver<String>>);
 
 /// Emits the current dictation state to the frontend via a 'dictation-state' event.
 fn emit_state(app_handle: &tauri::AppHandle, dictation_state: &DictationState) {
@@ -60,6 +71,33 @@ fn emit_state(app_handle: &tauri::AppHandle, dictation_state: &DictationState) {
         state: dictation_state.clone(),
     };
     let _ = app_handle.emit("dictation-state", payload);
+}
+
+fn source_language_for_translation(language: &str) -> String {
+    if language == "auto" {
+        "auto".to_string()
+    } else {
+        language.to_string()
+    }
+}
+
+fn sync_translation_languages(app: &tauri::AppHandle) {
+    let (source, target) = {
+        let shared_state = app.state::<SharedState>();
+        let state = shared_state.lock();
+        (
+            if state.language == "auto" {
+                None
+            } else {
+                Some(state.language.clone())
+            },
+            state.translation_target_lang.clone(),
+        )
+    };
+
+    let tx = app.state::<TranslationSender>();
+    let tx = tx.0.lock().unwrap();
+    let _ = tx.send(TranslationRequest::SetLanguages { source, target });
 }
 
 /// Registers fallback shortcuts for opening windows when the tray icon is hidden by macOS.
@@ -121,21 +159,21 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                         }
 
                         // Update state to Recording
-                        {
+                        let initial_recording_state = {
                             let mut state = shared_state.lock();
+                            let source_lang = source_language_for_translation(&state.language);
+                            let target_lang = state.translation_target_lang.clone();
                             state.dictation_state = DictationState::Recording {
                                 duration_ms: 0,
                                 partial_text: None,
+                                partial_translation: None,
+                                source_lang,
+                                target_lang,
                             };
-                        }
+                            state.dictation_state.clone()
+                        };
 
-                        emit_state(
-                            app_handle,
-                            &DictationState::Recording {
-                                duration_ms: 0,
-                                partial_text: None,
-                            },
-                        );
+                        emit_state(app_handle, &initial_recording_state);
 
                         // Show overlay window without focus
                         if let Some(window) = app_handle.get_webview_window("overlay") {
@@ -177,10 +215,20 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 let shared_state = app_levels.state::<SharedState>();
                                 let new_state = {
                                     let mut state = shared_state.lock();
-                                    if let DictationState::Recording { partial_text, .. } = &state.dictation_state {
+                                    if let DictationState::Recording {
+                                        partial_text,
+                                        partial_translation,
+                                        source_lang,
+                                        target_lang,
+                                        ..
+                                    } = &state.dictation_state
+                                    {
                                         state.dictation_state = DictationState::Recording {
                                             duration_ms: elapsed_ms,
                                             partial_text: partial_text.clone(),
+                                            partial_translation: partial_translation.clone(),
+                                            source_lang: source_lang.clone(),
+                                            target_lang: target_lang.clone(),
                                         };
                                         Some(state.dictation_state.clone())
                                     } else {
@@ -221,15 +269,13 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 {
                                     let tx = app_stream.state::<TranscriptionSender>();
                                     let tx = tx.0.lock().unwrap();
-                                    let _ = tx.send(TranscriptionRequest::TranscribePartial(
-                                        audio_data,
-                                    ));
+                                    let _ = tx
+                                        .send(TranscriptionRequest::TranscribePartial(audio_data));
                                 }
 
                                 // Wait for partial result on the dedicated channel
                                 let resp = {
-                                    let rx =
-                                        app_stream.state::<PartialTranscriptionReceiver>();
+                                    let rx = app_stream.state::<PartialTranscriptionReceiver>();
                                     let rx = rx.0.lock().unwrap();
                                     rx.recv_timeout(std::time::Duration::from_millis(5000))
                                 };
@@ -239,24 +285,96 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 }
 
                                 if let Ok(text) = resp {
+                                    let partial_text = text.trim().to_string();
+                                    let partial = if partial_text.is_empty() {
+                                        None
+                                    } else {
+                                        Some(partial_text.clone())
+                                    };
+
+                                    let (
+                                        recording_duration_ms,
+                                        source_lang,
+                                        target_lang,
+                                        translation_enabled,
+                                    ) = {
+                                        let shared_state = app_stream.state::<SharedState>();
+                                        let state = shared_state.lock();
+                                        if let DictationState::Recording {
+                                            duration_ms,
+                                            source_lang,
+                                            target_lang,
+                                            ..
+                                        } = &state.dictation_state
+                                        {
+                                            (
+                                                Some(*duration_ms),
+                                                source_lang.clone(),
+                                                target_lang.clone(),
+                                                state.translation_enabled,
+                                            )
+                                        } else {
+                                            (None, String::new(), String::new(), false)
+                                        }
+                                    };
+
+                                    let partial_translation = if translation_enabled
+                                        && partial.is_some()
+                                        && recording_duration_ms.is_some()
+                                    {
+                                        {
+                                            let tx = app_stream.state::<TranslationSender>();
+                                            let tx = tx.0.lock().unwrap();
+                                            let _ = tx.send(TranslationRequest::TranslatePartial(
+                                                TranslationJob {
+                                                    text: partial_text.clone(),
+                                                    source_lang: source_lang.clone(),
+                                                    target_lang: target_lang.clone(),
+                                                },
+                                            ));
+                                        }
+
+                                        let resp = {
+                                            let rx =
+                                                app_stream.state::<PartialTranslationReceiver>();
+                                            let rx = rx.0.lock().unwrap();
+                                            rx.recv_timeout(std::time::Duration::from_millis(1500))
+                                        };
+
+                                        resp.ok().and_then(|t| {
+                                            let trimmed = t.trim().to_string();
+                                            if trimmed.is_empty() {
+                                                None
+                                            } else {
+                                                Some(trimmed)
+                                            }
+                                        })
+                                    } else {
+                                        None
+                                    };
+
                                     let shared_state = app_stream.state::<SharedState>();
                                     let new_state = {
                                         let mut state = shared_state.lock();
                                         if let DictationState::Recording {
                                             duration_ms: d,
+                                            source_lang,
+                                            target_lang,
                                             ..
-                                        } = state.dictation_state
+                                        } = state.dictation_state.clone()
                                         {
                                             let partial = if text.trim().is_empty() {
                                                 None
                                             } else {
                                                 Some(text.trim().to_string())
                                             };
-                                            state.dictation_state =
-                                                DictationState::Recording {
-                                                    duration_ms: d,
-                                                    partial_text: partial,
-                                                };
+                                            state.dictation_state = DictationState::Recording {
+                                                duration_ms: d,
+                                                partial_text: partial,
+                                                partial_translation,
+                                                source_lang,
+                                                target_lang,
+                                            };
                                             Some(state.dictation_state.clone())
                                         } else {
                                             None
@@ -383,14 +501,28 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 state.dictation_state = DictationState::Idle;
                             }
                             emit_state(&app_handle_clone, &DictationState::Idle);
-                            if let Some(window) =
-                                app_handle_clone.get_webview_window("overlay")
-                            {
+                            if let Some(window) = app_handle_clone.get_webview_window("overlay") {
                                 let _ = window.hide();
                             }
                         } else {
-                            // Check if vocabulary corrections should be applied
-                            let vocab_enabled = app_handle_clone.state::<SharedState>().lock().vocab_enabled;
+                            let (
+                                vocab_enabled,
+                                translation_enabled,
+                                source_lang,
+                                target_lang,
+                                smart_paste,
+                            ) = {
+                                let shared_state = app_handle_clone.state::<SharedState>();
+                                let state = shared_state.lock();
+                                (
+                                    state.vocab_enabled,
+                                    state.translation_enabled,
+                                    source_language_for_translation(&state.language),
+                                    state.translation_target_lang.clone(),
+                                    state.smart_paste,
+                                )
+                            };
+
                             let correction_result = if vocab_enabled {
                                 let vocab = vocabulary::load_vocabulary();
                                 let result = vocabulary::apply_corrections(&trimmed, &vocab);
@@ -403,17 +535,17 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                 None
                             };
 
-                            // Record to transcription history (use corrected text if available)
-                            let history_text = correction_result
+                            let source_text = correction_result
                                 .as_ref()
                                 .map_or_else(|| trimmed.clone(), |r| r.text.clone());
+
                             let timestamp_ms = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64;
                             let entry = history::HistoryEntry {
                                 id: timestamp_ms,
-                                text: history_text.clone(),
+                                text: source_text.clone(),
                                 timestamp_ms,
                                 duration_ms: recording_duration_ms,
                             };
@@ -422,7 +554,133 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                             }
                             let _ = app_handle_clone.emit("history-updated", ());
 
-                            if let Some(correction_result) = correction_result {
+                            if translation_enabled {
+                                {
+                                    let shared_state = app_handle_clone.state::<SharedState>();
+                                    let mut state = shared_state.lock();
+                                    state.dictation_state = DictationState::Translating;
+                                }
+                                emit_state(&app_handle_clone, &DictationState::Translating);
+
+                                {
+                                    let tx = app_handle_clone.state::<TranslationSender>();
+                                    let tx = tx.0.lock().unwrap();
+                                    let _ =
+                                        tx.send(TranslationRequest::Translate(TranslationJob {
+                                            text: source_text.clone(),
+                                            source_lang: source_lang.clone(),
+                                            target_lang: target_lang.clone(),
+                                        }));
+                                }
+
+                                let translation_resp = {
+                                    let rx = app_handle_clone.state::<TranslationReceiver>();
+                                    let rx = rx.0.lock().unwrap();
+                                    rx.recv_timeout(std::time::Duration::from_secs(30))
+                                        .map_err(|_| ())
+                                };
+
+                                match translation_resp {
+                                    Ok(TranslationResponse::TranslationComplete(Ok(
+                                        translated,
+                                    ))) => {
+                                        let translated_text = translated.trim().to_string();
+                                        let translated_text = if translated_text.is_empty() {
+                                            source_text.clone()
+                                        } else {
+                                            translated_text
+                                        };
+
+                                        let preview_state = DictationState::TranslationPreview {
+                                            source_text: source_text.clone(),
+                                            translated_text: translated_text.clone(),
+                                            source_lang: source_lang.clone(),
+                                            target_lang: target_lang.clone(),
+                                        };
+
+                                        let shared_state = app_handle_clone.state::<SharedState>();
+                                        {
+                                            let mut state = shared_state.lock();
+                                            state.pending_source_text = Some(source_text);
+                                            state.pending_translated_text = Some(translated_text);
+                                            state.dictation_state = preview_state.clone();
+                                        }
+                                        emit_state(&app_handle_clone, &preview_state);
+                                    }
+                                    Ok(TranslationResponse::TranslationComplete(Err(e))) => {
+                                        log::error!("Translation failed: {}", e);
+                                        let app_for_paste = app_handle_clone.clone();
+                                        let text_to_paste = source_text.clone();
+                                        let _ = app_handle_clone.run_on_main_thread(move || {
+                                            if let Err(e) = input::paste::paste_text(
+                                                &text_to_paste,
+                                                smart_paste,
+                                            ) {
+                                                log::error!("Failed to paste text: {}", e);
+                                                let error_state = DictationState::Error {
+                                                    message: format!("Failed to paste: {}", e),
+                                                };
+                                                let shared_state =
+                                                    app_for_paste.state::<SharedState>();
+                                                {
+                                                    let mut state = shared_state.lock();
+                                                    state.dictation_state = error_state.clone();
+                                                }
+                                                emit_state(&app_for_paste, &error_state);
+                                                return;
+                                            }
+
+                                            let shared_state = app_for_paste.state::<SharedState>();
+                                            {
+                                                let mut state = shared_state.lock();
+                                                state.dictation_state = DictationState::Idle;
+                                            }
+                                            emit_state(&app_for_paste, &DictationState::Idle);
+                                            if let Some(window) =
+                                                app_for_paste.get_webview_window("overlay")
+                                            {
+                                                let _ = window.hide();
+                                            }
+                                        });
+                                    }
+                                    Ok(_) | Err(_) => {
+                                        log::error!("Translation timed out or thread disconnected");
+                                        let app_for_paste = app_handle_clone.clone();
+                                        let text_to_paste = source_text.clone();
+                                        let _ = app_handle_clone.run_on_main_thread(move || {
+                                            if let Err(e) = input::paste::paste_text(
+                                                &text_to_paste,
+                                                smart_paste,
+                                            ) {
+                                                log::error!("Failed to paste text: {}", e);
+                                                let error_state = DictationState::Error {
+                                                    message: format!("Failed to paste: {}", e),
+                                                };
+                                                let shared_state =
+                                                    app_for_paste.state::<SharedState>();
+                                                {
+                                                    let mut state = shared_state.lock();
+                                                    state.dictation_state = error_state.clone();
+                                                }
+                                                emit_state(&app_for_paste, &error_state);
+                                                return;
+                                            }
+
+                                            let shared_state = app_for_paste.state::<SharedState>();
+                                            {
+                                                let mut state = shared_state.lock();
+                                                state.dictation_state = DictationState::Idle;
+                                            }
+                                            emit_state(&app_for_paste, &DictationState::Idle);
+                                            if let Some(window) =
+                                                app_for_paste.get_webview_window("overlay")
+                                            {
+                                                let _ = window.hide();
+                                            }
+                                        });
+                                    }
+                                }
+                            } else if let Some(correction_result) = correction_result {
                                 // Corrections found — show preview, do NOT paste yet
                                 let preview_state = DictationState::CorrectionPreview {
                                     text: correction_result.text.clone(),
@@ -437,14 +695,14 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                                     state.dictation_state = preview_state.clone();
                                 }
                                 emit_state(&app_handle_clone, &preview_state);
-                                // Overlay stays visible for CorrectionPreview
                             } else {
-                                // No corrections — paste immediately (existing flow)
+                                // No corrections — paste immediately.
                                 let app_for_paste = app_handle_clone.clone();
-                                let text_to_paste = trimmed.clone();
-                                let smart_paste = app_handle_clone.state::<SharedState>().lock().smart_paste;
+                                let text_to_paste = source_text.clone();
                                 let _ = app_handle_clone.run_on_main_thread(move || {
-                                    if let Err(e) = input::paste::paste_text(&text_to_paste, smart_paste) {
+                                    if let Err(e) =
+                                        input::paste::paste_text(&text_to_paste, smart_paste)
+                                    {
                                         log::error!("Failed to paste text: {}", e);
                                         let error_state = DictationState::Error {
                                             message: format!("Failed to paste: {}", e),
@@ -506,8 +764,12 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
                 }
             });
         }
-        DictationState::Processing | DictationState::Downloading { .. } | DictationState::CorrectionPreview { .. } => {
-            // Ignore hotkey during processing, downloading, or correction preview
+        DictationState::Processing
+        | DictationState::Translating
+        | DictationState::Downloading { .. }
+        | DictationState::CorrectionPreview { .. }
+        | DictationState::TranslationPreview { .. } => {
+            // Ignore hotkey during processing, translating, downloading, or preview states
         }
         DictationState::Error { .. } => {
             // Reset to Idle on error
@@ -542,10 +804,7 @@ fn setup_model(app_handle: tauri::AppHandle) {
             let mut state = shared_state.lock();
             state.dictation_state = DictationState::Downloading { progress: 0.0 };
         }
-        emit_state(
-            &app_handle,
-            &DictationState::Downloading { progress: 0.0 },
-        );
+        emit_state(&app_handle, &DictationState::Downloading { progress: 0.0 });
         if let Some(window) = app_handle.get_webview_window("overlay") {
             let _ = window.show();
         }
@@ -587,10 +846,56 @@ fn setup_model(app_handle: tauri::AppHandle) {
         }
     } else {
         // Model already exists, load it directly
-        let path = transcription::model_manager::model_path(&selected_model)
-            .expect("Model should exist");
+        let path =
+            transcription::model_manager::model_path(&selected_model).expect("Model should exist");
         let path_str = path.to_string_lossy().to_string();
         load_model(&app_handle, &path_str, &selected_model);
+    }
+}
+
+fn setup_translation_model(app_handle: tauri::AppHandle) {
+    let model_name = {
+        let shared_state = app_handle.state::<SharedState>();
+        let state = shared_state.lock();
+        state.translation_model.clone()
+    };
+
+    let _ = std::fs::create_dir_all(translation::model_manager::models_dir());
+    if !translation::model_manager::model_exists(&model_name) {
+        log::info!(
+            "Translation model '{}' not found on disk; using fallback translation backend",
+            model_name
+        );
+    }
+    let model_path = translation::model_manager::model_path(&model_name);
+    let model_path_str = model_path.to_string_lossy().to_string();
+
+    {
+        let tx = app_handle.state::<TranslationSender>();
+        let tx = tx.0.lock().unwrap();
+        let _ = tx.send(TranslationRequest::LoadModel(Some(model_path_str)));
+    }
+
+    let resp = {
+        let rx = app_handle.state::<TranslationReceiver>();
+        let rx = rx.0.lock().unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|_| ())
+    };
+
+    match resp {
+        Ok(TranslationResponse::ModelLoaded(Ok(()))) => {
+            log::info!("Translation model initialized");
+        }
+        Ok(TranslationResponse::ModelLoaded(Err(e))) => {
+            log::error!("Failed to initialize translation model: {}", e);
+        }
+        Ok(_) => {
+            log::error!("Unexpected translation response during model initialization");
+        }
+        Err(_) => {
+            log::error!("Translation model initialization timed out");
+        }
     }
 }
 
@@ -613,7 +918,8 @@ fn set_hotkey(
     // Unregister the old shortcut
     let gs = app.global_shortcut();
     if gs.is_registered(old_hotkey.as_str()) {
-        gs.unregister(old_hotkey.as_str()).map_err(|e| format!("Failed to unregister old hotkey: {}", e))?;
+        gs.unregister(old_hotkey.as_str())
+            .map_err(|e| format!("Failed to unregister old hotkey: {}", e))?;
     }
 
     // Register the new shortcut with our handler
@@ -722,10 +1028,7 @@ fn get_smart_paste(shared_state: tauri::State<'_, SharedState>) -> bool {
 }
 
 #[tauri::command]
-fn set_smart_paste(
-    app: tauri::AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
+fn set_smart_paste(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     // Update in-memory state
     {
         let shared_state = app.state::<SharedState>();
@@ -747,10 +1050,7 @@ fn get_vocab_enabled(shared_state: tauri::State<'_, SharedState>) -> bool {
 }
 
 #[tauri::command]
-fn set_vocab_enabled(
-    app: tauri::AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
+fn set_vocab_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     // Update in-memory state
     {
         let shared_state = app.state::<SharedState>();
@@ -763,6 +1063,70 @@ fn set_vocab_enabled(
     cfg.vocab_enabled = enabled;
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
+    Ok(())
+}
+
+#[tauri::command]
+fn get_translation_enabled(shared_state: tauri::State<'_, SharedState>) -> bool {
+    shared_state.lock().translation_enabled
+}
+
+#[tauri::command]
+fn set_translation_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.translation_enabled = enabled;
+    }
+
+    let mut cfg = config::load_config();
+    cfg.translation_enabled = enabled;
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    sync_translation_languages(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_translation_target_lang(shared_state: tauri::State<'_, SharedState>) -> String {
+    shared_state.lock().translation_target_lang.clone()
+}
+
+#[tauri::command]
+fn set_translation_target_lang(app: tauri::AppHandle, target_lang: String) -> Result<(), String> {
+    let updated_state = {
+        let shared_state = app.state::<SharedState>();
+        let mut state = shared_state.lock();
+        state.translation_target_lang = target_lang.clone();
+        if let DictationState::Recording {
+            duration_ms,
+            partial_text,
+            partial_translation,
+            source_lang,
+            ..
+        } = state.dictation_state.clone()
+        {
+            state.dictation_state = DictationState::Recording {
+                duration_ms,
+                partial_text,
+                partial_translation,
+                source_lang,
+                target_lang: target_lang.clone(),
+            };
+            Some(state.dictation_state.clone())
+        } else {
+            None
+        }
+    };
+
+    let mut cfg = config::load_config();
+    cfg.translation_target_lang = target_lang;
+    config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
+
+    sync_translation_languages(&app);
+    if let Some(state) = updated_state {
+        emit_state(&app, &state);
+    }
     Ok(())
 }
 
@@ -787,7 +1151,12 @@ fn add_vocab_entry(phrase: String, replacement: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn update_vocab_entry(id: u64, phrase: String, replacement: String, enabled: bool) -> Result<(), String> {
+fn update_vocab_entry(
+    id: u64,
+    phrase: String,
+    replacement: String,
+    enabled: bool,
+) -> Result<(), String> {
     vocabulary::update_entry(id, phrase, replacement, enabled)
         .map_err(|e| format!("Failed to update vocab entry: {}", e))
 }
@@ -798,10 +1167,15 @@ fn delete_vocab_entry(id: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn accept_corrections(app: tauri::AppHandle, shared_state: tauri::State<'_, SharedState>) -> Result<(), String> {
+fn accept_corrections(
+    app: tauri::AppHandle,
+    shared_state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
     let (corrected_text, smart_paste) = {
         let mut state = shared_state.lock();
-        let text = state.pending_corrected_text.take()
+        let text = state
+            .pending_corrected_text
+            .take()
             .ok_or_else(|| "No pending corrections to accept".to_string())?;
         state.pending_original_text = None;
         let sp = state.smart_paste;
@@ -834,16 +1208,22 @@ fn accept_corrections(app: tauri::AppHandle, shared_state: tauri::State<'_, Shar
         if let Some(window) = app_for_paste.get_webview_window("overlay") {
             let _ = window.hide();
         }
-    }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
+    })
+    .map_err(|e| format!("Failed to run on main thread: {}", e))?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn undo_corrections(app: tauri::AppHandle, shared_state: tauri::State<'_, SharedState>) -> Result<(), String> {
+fn undo_corrections(
+    app: tauri::AppHandle,
+    shared_state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
     let (original_text, smart_paste) = {
         let mut state = shared_state.lock();
-        let text = state.pending_original_text.take()
+        let text = state
+            .pending_original_text
+            .take()
             .ok_or_else(|| "No pending corrections to undo".to_string())?;
         state.pending_corrected_text = None;
         let sp = state.smart_paste;
@@ -882,7 +1262,105 @@ fn undo_corrections(app: tauri::AppHandle, shared_state: tauri::State<'_, Shared
         if let Some(window) = app_for_paste.get_webview_window("overlay") {
             let _ = window.hide();
         }
-    }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
+    })
+    .map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn accept_translation(
+    app: tauri::AppHandle,
+    shared_state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let (translated_text, smart_paste) = {
+        let mut state = shared_state.lock();
+        let text = state
+            .pending_translated_text
+            .take()
+            .ok_or_else(|| "No pending translation to accept".to_string())?;
+        state.pending_source_text = None;
+        (text, state.smart_paste)
+    };
+
+    if let Err(e) = history::update_most_recent_text(translated_text.clone()) {
+        log::error!("Failed to update history entry: {}", e);
+    }
+    let _ = app.emit("history-updated", ());
+
+    let app_for_paste = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(e) = input::paste::paste_text(&translated_text, smart_paste) {
+            log::error!("Failed to paste translated text: {}", e);
+            let error_state = DictationState::Error {
+                message: format!("Failed to paste: {}", e),
+            };
+            let shared_state = app_for_paste.state::<SharedState>();
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = error_state.clone();
+            }
+            emit_state(&app_for_paste, &error_state);
+            return;
+        }
+
+        let shared_state = app_for_paste.state::<SharedState>();
+        {
+            let mut state = shared_state.lock();
+            state.dictation_state = DictationState::Idle;
+        }
+        emit_state(&app_for_paste, &DictationState::Idle);
+        if let Some(window) = app_for_paste.get_webview_window("overlay") {
+            let _ = window.hide();
+        }
+    })
+    .map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn reject_translation(
+    app: tauri::AppHandle,
+    shared_state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let (source_text, smart_paste) = {
+        let mut state = shared_state.lock();
+        let text = state
+            .pending_source_text
+            .take()
+            .ok_or_else(|| "No pending translation to reject".to_string())?;
+        state.pending_translated_text = None;
+        (text, state.smart_paste)
+    };
+
+    let app_for_paste = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(e) = input::paste::paste_text(&source_text, smart_paste) {
+            log::error!("Failed to paste source text: {}", e);
+            let error_state = DictationState::Error {
+                message: format!("Failed to paste: {}", e),
+            };
+            let shared_state = app_for_paste.state::<SharedState>();
+            {
+                let mut state = shared_state.lock();
+                state.dictation_state = error_state.clone();
+            }
+            emit_state(&app_for_paste, &error_state);
+            return;
+        }
+
+        let shared_state = app_for_paste.state::<SharedState>();
+        {
+            let mut state = shared_state.lock();
+            state.dictation_state = DictationState::Idle;
+        }
+        emit_state(&app_for_paste, &DictationState::Idle);
+        if let Some(window) = app_for_paste.get_webview_window("overlay") {
+            let _ = window.hide();
+        }
+    })
+    .map_err(|e| format!("Failed to run on main thread: {}", e))?;
 
     Ok(())
 }
@@ -901,7 +1379,10 @@ async fn set_language(app: tauri::AppHandle, language: String) -> Result<(), Str
         let current = state.selected_model.clone();
         let is_en = transcription::model_manager::is_english_only(&current);
         let needs_multilingual = language != "en";
-        (current.clone(), (needs_multilingual && is_en) || (!needs_multilingual && !is_en))
+        (
+            current.clone(),
+            (needs_multilingual && is_en) || (!needs_multilingual && !is_en),
+        )
     };
 
     // Determine new model if switching is needed
@@ -920,11 +1401,30 @@ async fn set_language(app: tauri::AppHandle, language: String) -> Result<(), Str
     };
 
     // Update language in state
-    {
+    let updated_state = {
         let shared_state = app.state::<SharedState>();
         let mut state = shared_state.lock();
         state.language = language.clone();
-    }
+        if let DictationState::Recording {
+            duration_ms,
+            partial_text,
+            partial_translation,
+            target_lang,
+            ..
+        } = state.dictation_state.clone()
+        {
+            state.dictation_state = DictationState::Recording {
+                duration_ms,
+                partial_text,
+                partial_translation,
+                source_lang: source_language_for_translation(&language),
+                target_lang,
+            };
+            Some(state.dictation_state.clone())
+        } else {
+            None
+        }
+    };
 
     // Persist to config
     let mut cfg = config::load_config();
@@ -932,11 +1432,19 @@ async fn set_language(app: tauri::AppHandle, language: String) -> Result<(), Str
     config::save_config(&cfg).map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Send language to transcription thread
-    let lang_for_whisper = if language == "auto" { None } else { Some(language) };
+    let lang_for_whisper = if language == "auto" {
+        None
+    } else {
+        Some(language)
+    };
     {
         let tx = app.state::<TranscriptionSender>();
         let tx = tx.0.lock().unwrap();
         let _ = tx.send(TranscriptionRequest::SetLanguage(lang_for_whisper));
+    }
+    sync_translation_languages(&app);
+    if let Some(state) = updated_state {
+        emit_state(&app, &state);
     }
 
     // If model needs switching, trigger model change
@@ -1012,8 +1520,8 @@ fn clear_history() -> Result<(), String> {
 
 #[tauri::command]
 fn copy_history_entry(text: String) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|e| format!("Failed to access clipboard: {}", e))?;
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
     clipboard
         .set_text(text)
         .map_err(|e| format!("Failed to copy: {}", e))?;
@@ -1086,6 +1594,9 @@ pub fn run() {
     let smart_paste = app_config.smart_paste;
     let vocab_enabled = app_config.vocab_enabled;
     let language = app_config.language.clone();
+    let translation_enabled = app_config.translation_enabled;
+    let translation_target_lang = app_config.translation_target_lang.clone();
+    let translation_model = app_config.translation_model.clone();
 
     // Create shared state with persisted settings
     let shared_state: SharedState = Arc::new(parking_lot::Mutex::new(state::AppState {
@@ -1095,12 +1606,19 @@ pub fn run() {
         smart_paste,
         language: language.clone(),
         vocab_enabled,
+        translation_enabled,
+        translation_target_lang,
+        translation_model,
         pending_original_text: None,
         pending_corrected_text: None,
+        pending_source_text: None,
+        pending_translated_text: None,
     }));
 
     // Spawn transcription thread
     let (req_tx, resp_rx, partial_rx) = transcription::whisper::spawn_transcription_thread();
+    let (translation_req_tx, translation_resp_rx, partial_translation_rx) =
+        translation::engine::spawn_translation_thread();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -1111,10 +1629,44 @@ pub fn run() {
         .manage(TranscriptionSender(std::sync::Mutex::new(req_tx)))
         .manage(TranscriptionReceiver(std::sync::Mutex::new(resp_rx)))
         .manage(PartialTranscriptionReceiver(std::sync::Mutex::new(partial_rx)))
+        .manage(TranslationSender(std::sync::Mutex::new(translation_req_tx)))
+        .manage(TranslationReceiver(std::sync::Mutex::new(translation_resp_rx)))
+        .manage(PartialTranslationReceiver(std::sync::Mutex::new(
+            partial_translation_rx,
+        )))
         .manage(ActiveCapture(std::sync::Mutex::new(None)))
         .manage(StreamingActive(Arc::new(AtomicBool::new(false))))
         .manage(CurrentHotkey(std::sync::Mutex::new(hotkey.clone())))
-        .invoke_handler(tauri::generate_handler![get_hotkey, set_hotkey, get_models, select_model, get_smart_paste, set_smart_paste, get_vocab_enabled, set_vocab_enabled, get_vocabulary, add_vocab_entry, update_vocab_entry, delete_vocab_entry, accept_corrections, undo_corrections, get_language, set_language, save_overlay_position, cancel_recording, get_history, delete_history_entry, clear_history, copy_history_entry])
+        .invoke_handler(tauri::generate_handler![
+            get_hotkey,
+            set_hotkey,
+            get_models,
+            select_model,
+            get_smart_paste,
+            set_smart_paste,
+            get_vocab_enabled,
+            set_vocab_enabled,
+            get_translation_enabled,
+            set_translation_enabled,
+            get_translation_target_lang,
+            set_translation_target_lang,
+            get_vocabulary,
+            add_vocab_entry,
+            update_vocab_entry,
+            delete_vocab_entry,
+            accept_corrections,
+            undo_corrections,
+            accept_translation,
+            reject_translation,
+            get_language,
+            set_language,
+            save_overlay_position,
+            cancel_recording,
+            get_history,
+            delete_history_entry,
+            clear_history,
+            copy_history_entry
+        ])
         .setup(move |app| {
             // Register global shortcut plugin with saved hotkey
             app.handle().plugin(
@@ -1171,14 +1723,25 @@ pub fn run() {
             {
                 let tx = app.state::<TranscriptionSender>();
                 let tx = tx.0.lock().unwrap();
-                let lang_for_whisper = if language == "auto" { None } else { Some(language) };
+                let lang_for_whisper = if language == "auto" {
+                    None
+                } else {
+                    Some(language.clone())
+                };
                 let _ = tx.send(TranscriptionRequest::SetLanguage(lang_for_whisper));
             }
+            sync_translation_languages(&app.handle());
 
             // Download/load model on startup in a background thread
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 setup_model(app_handle);
+            });
+
+            // Initialize translation backend on startup.
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                setup_translation_model(app_handle);
             });
 
             Ok(())

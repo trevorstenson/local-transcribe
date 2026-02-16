@@ -102,8 +102,7 @@ pub async fn download_model<F>(model_name: &str, progress_callback: F) -> Result
 where
     F: Fn(u64, u64),
 {
-    let model = find_model(model_name)
-        .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
+    let model = find_model(model_name).ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
     let dir = models_dir();
     std::fs::create_dir_all(&dir)?;
@@ -154,5 +153,7 @@ pub fn english_equivalent(model_name: &str) -> Option<&'static str> {
 
 /// Returns whether a model is English-only.
 pub fn is_english_only(model_name: &str) -> bool {
-    find_model(model_name).map(|m| m.english_only).unwrap_or(false)
+    find_model(model_name)
+        .map(|m| m.english_only)
+        .unwrap_or(false)
 }
