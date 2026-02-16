@@ -67,9 +67,9 @@ impl TranslationService {
             .as_ref()
             .ok_or_else(|| "Translation model not initialized".to_string())?;
 
-        // For NLLB models, prefix source language token in the input.
-        let source_with_lang = format!("{} {}", source_nllb, text);
-        let sources = vec![source_with_lang];
+        // For the ct2rs NLLB path, keep source as plain text and drive translation
+        // direction via target prefix language token.
+        let sources = vec![text.to_string()];
         let target_prefixes = vec![vec![target_nllb.to_string()]];
 
         let mut options = TranslationOptions::<String, String>::default();
