@@ -37,6 +37,66 @@ fn make_window_non_activating(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Wrapper around an NSEvent monitor id so it can be stored in a static.
+#[cfg(target_os = "macos")]
+struct MonitorId(cocoa::base::id);
+
+#[cfg(target_os = "macos")]
+unsafe impl Send for MonitorId {}
+
+/// Stores the active NSEvent global monitor reference so it can be removed later.
+#[cfg(target_os = "macos")]
+static PREVIEW_MONITOR: parking_lot::Mutex<Option<MonitorId>> = parking_lot::Mutex::new(None);
+
+/// Installs a global key event monitor that listens for Enter/Escape while a preview is showing.
+/// The monitor emits a Tauri event so the frontend can dispatch the appropriate command.
+#[cfg(target_os = "macos")]
+fn install_preview_key_monitor(app_handle: tauri::AppHandle) {
+    use block::ConcreteBlock;
+    use cocoa::base::id;
+    use objc::{class, sel, sel_impl};
+
+    remove_preview_key_monitor();
+
+    let handler = ConcreteBlock::new(move |event: id| {
+        let key_code: u16 = unsafe { objc::msg_send![event, keyCode] };
+        match key_code {
+            36 => {
+                let _ = app_handle.emit("preview-key-pressed", "enter");
+            }
+            53 => {
+                let _ = app_handle.emit("preview-key-pressed", "escape");
+            }
+            _ => {}
+        }
+    });
+    let handler = handler.copy();
+
+    let monitor: id = unsafe {
+        // NSKeyDownMask = 1 << 10
+        objc::msg_send![
+            class!(NSEvent),
+            addGlobalMonitorForEventsMatchingMask: (1u64 << 10)
+            handler: &*handler
+        ]
+    };
+
+    *PREVIEW_MONITOR.lock() = Some(MonitorId(monitor));
+}
+
+/// Removes the global key event monitor if one is active.
+#[cfg(target_os = "macos")]
+fn remove_preview_key_monitor() {
+    use objc::{class, sel, sel_impl};
+
+    let mut monitor = PREVIEW_MONITOR.lock();
+    if let Some(m) = monitor.take() {
+        unsafe {
+            let _: () = objc::msg_send![class!(NSEvent), removeMonitor: m.0];
+        }
+    }
+}
+
 /// Wrapper to store the transcription channel sender as managed state.
 pub struct TranscriptionSender(pub std::sync::Mutex<std::sync::mpsc::Sender<TranscriptionRequest>>);
 
@@ -66,7 +126,18 @@ pub struct TranslationReceiver(
 pub struct PartialTranslationReceiver(pub std::sync::Mutex<std::sync::mpsc::Receiver<String>>);
 
 /// Emits the current dictation state to the frontend via a 'dictation-state' event.
+/// Also manages the global key monitor for preview states.
 fn emit_state(app_handle: &tauri::AppHandle, dictation_state: &DictationState) {
+    #[cfg(target_os = "macos")]
+    match dictation_state {
+        DictationState::CorrectionPreview { .. } | DictationState::TranslationPreview { .. } => {
+            install_preview_key_monitor(app_handle.clone());
+        }
+        _ => {
+            remove_preview_key_monitor();
+        }
+    }
+
     let payload = StatePayload {
         state: dictation_state.clone(),
     };
