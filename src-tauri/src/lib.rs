@@ -37,62 +37,132 @@ fn make_window_non_activating(window: &tauri::WebviewWindow) {
     }
 }
 
-/// Wrapper around an NSEvent monitor id so it can be stored in a static.
+/// CGEventTap-based key interception for preview states.
+/// Unlike NSEvent global monitors, a CGEventTap can suppress events so they
+/// never reach the active application — preventing Enter from submitting forms
+/// or Escape from closing dialogs while a preview overlay is visible.
 #[cfg(target_os = "macos")]
-struct MonitorId(cocoa::base::id);
+mod preview_keys {
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::sync::OnceLock;
+    use tauri::Emitter;
 
-#[cfg(target_os = "macos")]
-unsafe impl Send for MonitorId {}
+    type CGEventRef = *mut c_void;
+    type CGEventTapProxy = *mut c_void;
 
-/// Stores the active NSEvent global monitor reference so it can be removed later.
-#[cfg(target_os = "macos")]
-static PREVIEW_MONITOR: parking_lot::Mutex<Option<MonitorId>> = parking_lot::Mutex::new(None);
+    const K_CG_SESSION_EVENT_TAP: u32 = 1;
+    const K_CG_HEAD_INSERT_EVENT_TAP: u32 = 0;
+    const K_CG_EVENT_TAP_OPTION_DEFAULT: u32 = 0;
+    const K_CG_EVENT_KEY_DOWN: u32 = 10;
+    const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
+    const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
 
-/// Installs a global key event monitor that listens for Enter/Escape while a preview is showing.
-/// The monitor emits a Tauri event so the frontend can dispatch the appropriate command.
-#[cfg(target_os = "macos")]
-fn install_preview_key_monitor(app_handle: tauri::AppHandle) {
-    use block::ConcreteBlock;
-    use cocoa::base::id;
-    use objc::{class, sel, sel_impl};
+    extern "C" {
+        fn CGEventTapCreate(
+            tap: u32,
+            place: u32,
+            options: u32,
+            events_of_interest: u64,
+            callback: extern "C" fn(CGEventTapProxy, u32, CGEventRef, *mut c_void) -> CGEventRef,
+            user_info: *mut c_void,
+        ) -> *mut c_void;
+        fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
+        fn CGEventTapEnable(tap: *mut c_void, enable: bool);
+        fn CFMachPortCreateRunLoopSource(
+            allocator: *const c_void,
+            port: *mut c_void,
+            order: isize,
+        ) -> *mut c_void;
+        fn CFRunLoopGetMain() -> *mut c_void;
+        fn CFRunLoopAddSource(rl: *mut c_void, source: *mut c_void, mode: *const c_void);
+        static kCFRunLoopCommonModes: *const c_void;
+    }
 
-    remove_preview_key_monitor();
+    static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-    let handler = ConcreteBlock::new(move |event: id| {
-        let key_code: u16 = unsafe { objc::msg_send![event, keyCode] };
+    struct TapRef(*mut c_void);
+    unsafe impl Send for TapRef {}
+    unsafe impl Sync for TapRef {}
+
+    static EVENT_TAP: OnceLock<TapRef> = OnceLock::new();
+
+    extern "C" fn tap_callback(
+        _proxy: CGEventTapProxy,
+        event_type: u32,
+        event: CGEventRef,
+        _user_info: *mut c_void,
+    ) -> CGEventRef {
+        if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
+            if let Some(tap) = EVENT_TAP.get() {
+                unsafe { CGEventTapEnable(tap.0, true); }
+            }
+            return event;
+        }
+
+        if event_type != K_CG_EVENT_KEY_DOWN {
+            return event;
+        }
+
+        let key_code = unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
         match key_code {
             36 => {
-                let _ = app_handle.emit("preview-key-pressed", "enter");
+                if let Some(app) = APP_HANDLE.get() {
+                    let _ = app.emit("preview-key-pressed", "enter");
+                }
+                ptr::null_mut()
             }
             53 => {
-                let _ = app_handle.emit("preview-key-pressed", "escape");
+                if let Some(app) = APP_HANDLE.get() {
+                    let _ = app.emit("preview-key-pressed", "escape");
+                }
+                ptr::null_mut()
             }
-            _ => {}
+            _ => event,
         }
-    });
-    let handler = handler.copy();
+    }
 
-    let monitor: id = unsafe {
-        // NSKeyDownMask = 1 << 10
-        objc::msg_send![
-            class!(NSEvent),
-            addGlobalMonitorForEventsMatchingMask: (1u64 << 10)
-            handler: &*handler
-        ]
-    };
+    /// Creates the event tap (initially disabled) and adds it to the main run loop.
+    /// Must be called once during app setup.
+    pub fn setup(app_handle: tauri::AppHandle) {
+        APP_HANDLE.get_or_init(|| app_handle);
 
-    *PREVIEW_MONITOR.lock() = Some(MonitorId(monitor));
-}
-
-/// Removes the global key event monitor if one is active.
-#[cfg(target_os = "macos")]
-fn remove_preview_key_monitor() {
-    use objc::{class, sel, sel_impl};
-
-    let mut monitor = PREVIEW_MONITOR.lock();
-    if let Some(m) = monitor.take() {
         unsafe {
-            let _: () = objc::msg_send![class!(NSEvent), removeMonitor: m.0];
+            let mask: u64 = 1 << K_CG_EVENT_KEY_DOWN;
+            let tap = CGEventTapCreate(
+                K_CG_SESSION_EVENT_TAP,
+                K_CG_HEAD_INSERT_EVENT_TAP,
+                K_CG_EVENT_TAP_OPTION_DEFAULT,
+                mask,
+                tap_callback,
+                ptr::null_mut(),
+            );
+
+            if tap.is_null() {
+                log::error!("Failed to create CGEventTap for preview keys");
+                return;
+            }
+
+            CGEventTapEnable(tap, false);
+
+            let source = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
+            if !source.is_null() {
+                CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+            }
+
+            EVENT_TAP.get_or_init(|| TapRef(tap));
+        }
+    }
+
+    pub fn enable() {
+        if let Some(tap) = EVENT_TAP.get() {
+            unsafe { CGEventTapEnable(tap.0, true); }
+        }
+    }
+
+    pub fn disable() {
+        if let Some(tap) = EVENT_TAP.get() {
+            unsafe { CGEventTapEnable(tap.0, false); }
         }
     }
 }
@@ -131,10 +201,10 @@ fn emit_state(app_handle: &tauri::AppHandle, dictation_state: &DictationState) {
     #[cfg(target_os = "macos")]
     match dictation_state {
         DictationState::CorrectionPreview { .. } | DictationState::TranslationPreview { .. } => {
-            install_preview_key_monitor(app_handle.clone());
+            preview_keys::enable();
         }
         _ => {
-            remove_preview_key_monitor();
+            preview_keys::disable();
         }
     }
 
@@ -1790,6 +1860,10 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("overlay") {
                 make_window_non_activating(&window);
             }
+
+            // Set up CGEventTap for preview key interception (Enter/Escape)
+            #[cfg(target_os = "macos")]
+            preview_keys::setup(app.handle().clone());
 
             // Restore saved overlay position
             if let Some(window) = app.get_webview_window("overlay") {
