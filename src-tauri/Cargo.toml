@@ -31,6 +31,8 @@ futures-util = "0.3"
 dirs = "6"
 parking_lot = "0.12"
 regex = "1"
+ct2rs = { version = "0.9.17", default-features = false, features = ["all-tokenizers", "accelerate"] }
+whatlang = "0.16"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

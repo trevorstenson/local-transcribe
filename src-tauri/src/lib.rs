@@ -853,21 +853,41 @@ fn setup_model(app_handle: tauri::AppHandle) {
     }
 }
 
-fn setup_translation_model(app_handle: tauri::AppHandle) {
+fn setup_translation_model(app_handle: tauri::AppHandle) -> Result<(), String> {
     let model_name = {
         let shared_state = app_handle.state::<SharedState>();
         let state = shared_state.lock();
         state.translation_model.clone()
     };
 
-    let _ = std::fs::create_dir_all(translation::model_manager::models_dir());
-    if !translation::model_manager::model_exists(&model_name) {
+    let model_path = if translation::model_manager::model_exists(&model_name) {
+        translation::model_manager::model_path(&model_name)
+    } else {
         log::info!(
-            "Translation model '{}' not found on disk; using fallback translation backend",
+            "Translation model '{}' not found; downloading from Hugging Face",
             model_name
         );
-    }
-    let model_path = translation::model_manager::model_path(&model_name);
+
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to create runtime for translation download: {}",
+                    e
+                ));
+            }
+        };
+
+        match rt.block_on(async {
+            translation::model_manager::download_model(&model_name, |_downloaded, _total| {}).await
+        }) {
+            Ok(path) => path,
+            Err(e) => {
+                return Err(format!("Failed to download translation model: {}", e));
+            }
+        }
+    };
+
     let model_path_str = model_path.to_string_lossy().to_string();
 
     {
@@ -879,22 +899,26 @@ fn setup_translation_model(app_handle: tauri::AppHandle) {
     let resp = {
         let rx = app_handle.state::<TranslationReceiver>();
         let rx = rx.0.lock().unwrap();
-        rx.recv_timeout(std::time::Duration::from_secs(10))
+        rx.recv_timeout(std::time::Duration::from_secs(60))
             .map_err(|_| ())
     };
 
     match resp {
         Ok(TranslationResponse::ModelLoaded(Ok(()))) => {
             log::info!("Translation model initialized");
+            Ok(())
         }
         Ok(TranslationResponse::ModelLoaded(Err(e))) => {
             log::error!("Failed to initialize translation model: {}", e);
+            Err(format!("Failed to initialize translation model: {}", e))
         }
         Ok(_) => {
             log::error!("Unexpected translation response during model initialization");
+            Err("Unexpected translation response during model initialization".to_string())
         }
         Err(_) => {
             log::error!("Translation model initialization timed out");
+            Err("Translation model initialization timed out".to_string())
         }
     }
 }
@@ -1073,6 +1097,10 @@ fn get_translation_enabled(shared_state: tauri::State<'_, SharedState>) -> bool 
 
 #[tauri::command]
 fn set_translation_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled {
+        setup_translation_model(app.clone())?;
+    }
+
     {
         let shared_state = app.state::<SharedState>();
         let mut state = shared_state.lock();
@@ -1738,11 +1766,15 @@ pub fn run() {
                 setup_model(app_handle);
             });
 
-            // Initialize translation backend on startup.
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                setup_translation_model(app_handle);
-            });
+            if translation_enabled {
+                // Initialize translation backend on startup when translation is enabled.
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = setup_translation_model(app_handle) {
+                        log::error!("{}", e);
+                    }
+                });
+            }
 
             Ok(())
         })

@@ -15,7 +15,7 @@ Transcription runs on-device with Whisper (`whisper-rs` + Metal).
 - Personal vocabulary corrections with preview + accept/undo
 - Local transcription history
 - Menu bar settings for hotkey, model, language, vocabulary, and translation options
-- Experimental translation preview flow (currently scaffolded; see Scope)
+- Local translation preview flow (NLLB via CTranslate2)
 
 ## Installing a Release
 
@@ -47,6 +47,7 @@ npm run tauri dev
 Notes:
 - The first build can take a while because Whisper is compiled from source.
 - On first launch, Wren downloads `base.en` (~148 MB) from Hugging Face.
+- When translation is enabled, Wren downloads the NLLB CTranslate2 model (~623 MB) on first use.
 
 ## Using Wren
 
@@ -124,7 +125,7 @@ Versioned builds and release notes are published on the repository's **Releases*
 
 - macOS-focused
 - Whisper transcription supports English and multilingual models
-- Translation UI/pipeline is scaffolded, but backend translation is currently passthrough
+- Translation runs locally with an NLLB CTranslate2 model
 - No cloud transcription
 
 ## License
