@@ -1,5 +1,9 @@
 use std::sync::mpsc;
 
+use ct2rs::sys::ComputeType;
+use ct2rs::{Config, TranslationOptions, Translator};
+use whatlang::{detect, Lang};
+
 #[derive(Debug, Clone)]
 pub struct TranslationJob {
     pub text: String,
@@ -8,6 +12,7 @@ pub struct TranslationJob {
 }
 
 struct TranslationService {
+    translator: Option<Translator<ct2rs::tokenizers::auto::Tokenizer>>,
     source_lang: Option<String>,
     target_lang: String,
     model_loaded: bool,
@@ -16,13 +21,24 @@ struct TranslationService {
 impl TranslationService {
     fn new() -> Self {
         Self {
+            translator: None,
             source_lang: Some("en".to_string()),
             target_lang: "en".to_string(),
             model_loaded: false,
         }
     }
 
-    fn load_model(&mut self, _path: Option<String>) -> Result<(), String> {
+    fn load_model(&mut self, path: Option<String>) -> Result<(), String> {
+        let path = path.ok_or_else(|| "Missing translation model path".to_string())?;
+        let mut config = Config::default();
+        config.compute_type = ComputeType::INT8;
+        config.num_threads_per_replica = std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4);
+
+        let translator =
+            Translator::new(&path, &config).map_err(|e| format!("Failed to load model: {}", e))?;
+        self.translator = Some(translator);
         self.model_loaded = true;
         Ok(())
     }
@@ -37,13 +53,100 @@ impl TranslationService {
             return Ok(String::new());
         }
 
-        if job.source_lang == job.target_lang {
+        let target_nllb = nllb_lang_for_app_lang(&job.target_lang)
+            .ok_or_else(|| format!("Unsupported target language '{}'", job.target_lang))?;
+        let source_nllb = resolve_source_nllb_lang(&job.source_lang, text)
+            .ok_or_else(|| format!("Unsupported source language '{}'", job.source_lang))?;
+
+        if source_nllb == target_nllb {
             return Ok(text.to_string());
         }
 
-        // Placeholder backend for pipeline integration. The concrete model
-        // implementation will replace this passthrough behavior.
-        Ok(text.to_string())
+        let translator = self
+            .translator
+            .as_ref()
+            .ok_or_else(|| "Translation model not initialized".to_string())?;
+
+        // For NLLB models, prefix source language token in the input.
+        let source_with_lang = format!("{} {}", source_nllb, text);
+        let sources = vec![source_with_lang];
+        let target_prefixes = vec![vec![target_nllb.to_string()]];
+
+        let mut options = TranslationOptions::<String, String>::default();
+        options.beam_size = 1;
+        options.max_decoding_length = 256;
+
+        let output = translator
+            .translate_batch_with_target_prefix(&sources, &target_prefixes, &options, None)
+            .map_err(|e| format!("Translation inference failed: {}", e))?;
+
+        let translated = output
+            .into_iter()
+            .next()
+            .map(|(text, _)| text.trim().to_string())
+            .unwrap_or_default();
+
+        if translated.is_empty() {
+            Ok(text.to_string())
+        } else {
+            Ok(translated)
+        }
+    }
+}
+
+fn resolve_source_nllb_lang(source_lang: &str, text: &str) -> Option<&'static str> {
+    if source_lang == "auto" {
+        detect(text)
+            .and_then(|info| nllb_lang_for_detected(info.lang()))
+            .or(Some("eng_Latn"))
+    } else {
+        nllb_lang_for_app_lang(source_lang)
+    }
+}
+
+fn nllb_lang_for_detected(lang: Lang) -> Option<&'static str> {
+    match lang {
+        Lang::Eng => Some("eng_Latn"),
+        Lang::Spa => Some("spa_Latn"),
+        Lang::Fra => Some("fra_Latn"),
+        Lang::Deu => Some("deu_Latn"),
+        Lang::Ita => Some("ita_Latn"),
+        Lang::Por => Some("por_Latn"),
+        Lang::Cmn => Some("zho_Hans"),
+        Lang::Jpn => Some("jpn_Jpan"),
+        Lang::Kor => Some("kor_Hang"),
+        Lang::Rus => Some("rus_Cyrl"),
+        Lang::Ara => Some("arb_Arab"),
+        Lang::Hin => Some("hin_Deva"),
+        Lang::Nld => Some("nld_Latn"),
+        Lang::Pol => Some("pol_Latn"),
+        Lang::Tur => Some("tur_Latn"),
+        Lang::Swe => Some("swe_Latn"),
+        Lang::Ukr => Some("ukr_Cyrl"),
+        _ => None,
+    }
+}
+
+fn nllb_lang_for_app_lang(lang: &str) -> Option<&'static str> {
+    match lang {
+        "en" => Some("eng_Latn"),
+        "es" => Some("spa_Latn"),
+        "fr" => Some("fra_Latn"),
+        "de" => Some("deu_Latn"),
+        "it" => Some("ita_Latn"),
+        "pt" => Some("por_Latn"),
+        "zh" => Some("zho_Hans"),
+        "ja" => Some("jpn_Jpan"),
+        "ko" => Some("kor_Hang"),
+        "ru" => Some("rus_Cyrl"),
+        "ar" => Some("arb_Arab"),
+        "hi" => Some("hin_Deva"),
+        "nl" => Some("nld_Latn"),
+        "pl" => Some("pol_Latn"),
+        "tr" => Some("tur_Latn"),
+        "sv" => Some("swe_Latn"),
+        "uk" => Some("ukr_Cyrl"),
+        _ => None,
     }
 }
 
