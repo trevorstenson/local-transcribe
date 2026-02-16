@@ -1,9 +1,9 @@
 ## Codebase Patterns
 - Tauri v2 + React + TypeScript + Tailwind CSS app (macOS desktop)
 - Rust backend in src-tauri/src/, React frontend in src/
-- Config stored at ~/.local/share/com.dictate.app/config.json (config.rs: load_config/save_config)
-- History stored at ~/.local/share/com.dictate.app/history.json (history.rs: load_history/save_history/add_entry)
-- Models stored at ~/.local/share/com.dictate.app/models/
+- Config stored at ~/.local/share/com.wren.app/config.json (config.rs: load_config/save_config)
+- History stored at ~/.local/share/com.wren.app/history.json (history.rs: load_history/save_history/add_entry)
+- Models stored at ~/.local/share/com.wren.app/models/
 - DictationState enum in state.rs uses #[serde(tag = "type")] for discriminated union serialization
 - SharedState = Arc<parking_lot::Mutex<AppState>> — use .lock() directly (no .unwrap())
 - Tauri commands: #[tauri::command] fn name(...), registered in .invoke_handler(tauri::generate_handler![...])
@@ -23,7 +23,7 @@
 - Implemented vocabulary storage module in src-tauri/src/vocabulary.rs
 - VocabEntry struct (id, phrase, replacement, enabled) and Vocabulary wrapper struct
 - CRUD functions: load_vocabulary, save_vocabulary, add_entry, update_entry, delete_entry
-- Storage at ~/.local/share/com.dictate.app/vocabulary.json
+- Storage at ~/.local/share/com.wren.app/vocabulary.json
 - Added mod vocabulary to lib.rs
 - Files changed: src-tauri/src/vocabulary.rs (new), src-tauri/src/lib.rs
 - **Learnings for future iterations:**
