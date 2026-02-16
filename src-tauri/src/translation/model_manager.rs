@@ -17,7 +17,7 @@ pub const AVAILABLE_TRANSLATION_MODELS: [TranslationModelInfo; 1] = [Translation
     required_files: &[
         "config.json",
         "model.bin",
-        "shared_vocabulary.json",
+        "shared_vocabulary.txt",
         "tokenizer.json",
     ],
 }];
