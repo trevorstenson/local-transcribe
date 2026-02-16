@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { DictationState } from "../types";
 import { useAudioLevels } from "../hooks/useAudioLevels";
 import { AudioWaveform } from "./AudioWaveform";
@@ -92,28 +93,40 @@ export function Overlay({ state }: OverlayProps) {
     };
   }, [state.type]);
 
-  // Preview keyboard event listeners
+  // Preview keyboard event listeners (via global NSEvent monitor → Tauri event bridge)
   useEffect(() => {
     if (state.type !== "CorrectionPreview" && state.type !== "TranslationPreview") return;
 
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKey = (key: string) => {
       if (state.type === "CorrectionPreview") {
-        if (e.key === "Escape") {
+        if (key === "escape") {
           invoke("undo_corrections");
-        } else if (e.key === "Enter") {
+        } else if (key === "enter") {
           invoke("accept_corrections");
         }
       } else if (state.type === "TranslationPreview") {
-        if (e.key === "Escape") {
+        if (key === "escape") {
           invoke("reject_translation");
-        } else if (e.key === "Enter") {
+        } else if (key === "enter") {
           invoke("accept_translation");
         }
       }
     };
 
+    // Listen for global key events bridged from the native NSEvent monitor
+    const unlisten = listen<string>("preview-key-pressed", (event) => {
+      handleKey(event.payload);
+    });
+
+    // Fallback: direct keydown listener (works if window ever has focus)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleKey("escape");
+      else if (e.key === "Enter") handleKey("enter");
+    };
     document.addEventListener("keydown", handleKeyDown);
+
     return () => {
+      unlisten.then((fn) => fn());
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [state.type]);
