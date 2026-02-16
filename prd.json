@@ -1,5 +1,5 @@
 {
-  "project": "Dictate",
+  "project": "Wren",
   "branchName": "ralph/personal-vocabulary",
   "description": "Personal Vocabulary — local correction layer between Whisper transcription output and paste, with whole-word matching, case preservation, correction preview in overlay, and undo hotkey",
   "userStories": [
@@ -10,7 +10,7 @@
       "acceptanceCriteria": [
         "Create src-tauri/src/vocabulary.rs with VocabEntry struct: id (u64), phrase (String), replacement (String), enabled (bool, default true). Derive Debug, Clone, Serialize, Deserialize",
         "Create Vocabulary struct wrapping Vec<VocabEntry> with Serialize, Deserialize, Default derives",
-        "Add vocabulary_path() function returning ~/.local/share/com.dictate.app/vocabulary.json (using dirs::data_dir(), same pattern as config_path() in config.rs and history_path() in history.rs)",
+        "Add vocabulary_path() function returning ~/.local/share/com.wren.app/vocabulary.json (using dirs::data_dir(), same pattern as config_path() in config.rs and history_path() in history.rs)",
         "Add load_vocabulary() -> Vocabulary that reads from disk, returns Vocabulary::default() if file missing or corrupt (same pattern as load_config() in config.rs)",
         "Add save_vocabulary(vocabulary: &Vocabulary) -> Result<()> that writes to disk, creating directory if needed (same pattern as save_config() in config.rs)",
         "Add add_entry(entry: VocabEntry) -> Result<()> that loads, pushes entry, saves",

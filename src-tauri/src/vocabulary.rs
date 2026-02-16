@@ -24,7 +24,7 @@ pub struct Vocabulary {
 fn vocabulary_path() -> PathBuf {
     let data_dir = dirs::data_dir().expect("Failed to get data directory");
     data_dir
-        .join("com.dictate.app")
+        .join("com.wren.app")
         .join("vocabulary.json")
 }
 

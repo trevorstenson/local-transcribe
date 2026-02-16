@@ -7,7 +7,7 @@ use tauri::{
 pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let settings = MenuItemBuilder::with_id("settings", "Settings...").build(app)?;
     let history = MenuItemBuilder::with_id("history", "History...").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit Dictate").build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "Quit Wren").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&settings)
         .item(&history)
@@ -18,7 +18,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
         .icon_as_template(true)
-        .tooltip("Dictate")
+        .tooltip("Wren")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -43,7 +43,7 @@ pub fn show_settings_window(app: &tauri::AppHandle) {
             "settings",
             tauri::WebviewUrl::App("index.html".into()),
         )
-        .title("Dictate Settings")
+        .title("Wren Settings")
         .inner_size(420.0, 680.0)
         .resizable(true)
         .center()

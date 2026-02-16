@@ -1,6 +1,6 @@
-# Dictate
+# Wren
 
-Dictate is a macOS dictation app that runs locally.
+Wren is a macOS dictation app that runs locally.
 
 Press a hotkey, talk, press again, and your text is pasted into the app you were using.
 Transcription runs on-device with Whisper (`whisper-rs` + Metal).
@@ -10,7 +10,7 @@ Transcription runs on-device with Whisper (`whisper-rs` + Metal).
 - Global hotkey to start/stop recording (default: `Option+Space`)
 - Floating status overlay while recording/transcribing/downloading
 - Auto-download and switch between Whisper models
-- Smart Paste mode: if a text field is focused, Dictate pastes immediately; otherwise it copies text to your clipboard
+- Smart Paste mode: if a text field is focused, Wren pastes immediately; otherwise it copies text to your clipboard
 - Menu bar settings for hotkey, model, and Smart Paste
 
 ## Requirements
@@ -30,15 +30,15 @@ npm run tauri dev
 
 Notes:
 - The first build can take a while because Whisper is compiled from source.
-- On first launch, Dictate downloads `base.en` (~148 MB) from Hugging Face.
+- On first launch, Wren downloads `base.en` (~148 MB) from Hugging Face.
 
-## Using Dictate
+## Using Wren
 
 1. Launch the app.
 2. Grant macOS permissions when prompted (Microphone and Accessibility).
 3. Press `Option+Space` to start dictation.
 4. Press `Option+Space` again to stop.
-5. Dictate transcribes and pastes (or copies to clipboard when Smart Paste blocks auto-paste).
+5. Wren transcribes and pastes (or copies to clipboard when Smart Paste blocks auto-paste).
 
 Open the menu bar icon and click `Settings...` to change hotkey, model, and Smart Paste.
 
@@ -58,8 +58,8 @@ English models currently available:
 
 ## Paths
 
-- Config: `~/Library/Application Support/com.dictate.app/config.json`
-- Models: `~/Library/Application Support/com.dictate.app/models/`
+- Config: `~/Library/Application Support/com.wren.app/config.json`
+- Models: `~/Library/Application Support/com.wren.app/models/`
 
 ## Build A Release
 

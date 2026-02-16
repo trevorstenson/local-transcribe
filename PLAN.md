@@ -1,4 +1,4 @@
-# Dictate: Local Voice-to-Text App
+# Wren: Local Voice-to-Text App
 
 ## Context
 
@@ -160,14 +160,14 @@ npm create tauri-app@latest . -- --template react-ts
 **2. Configure `src-tauri/tauri.conf.json`**
 ```json
 {
-  "productName": "Dictate",
-  "identifier": "com.dictate.app",
+  "productName": "Wren",
+  "identifier": "com.wren.app",
   "app": {
     "macOSPrivateApi": true,
     "windows": [
       {
         "label": "overlay",
-        "title": "Dictate",
+        "title": "Wren",
         "width": 280,
         "height": 120,
         "y": 80,
@@ -186,7 +186,7 @@ npm create tauri-app@latest . -- --template react-ts
     "macOS": {
       "entitlements": "./entitlements.plist",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Dictate needs microphone access to record your voice for transcription."
+        "NSMicrophoneUsageDescription": "Wren needs microphone access to record your voice for transcription."
       }
     }
   }
@@ -399,7 +399,7 @@ pub const AVAILABLE_MODELS: &[ModelInfo] = &[
 pub fn models_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.dictate.app")
+        .join("com.wren.app")
         .join("models")
 }
 
@@ -821,7 +821,7 @@ export function PulseAnimation() {
 ## Model Storage
 
 ```
-~/Library/Application Support/com.dictate.app/
+~/Library/Application Support/com.wren.app/
 ├── models/
 │   ├── ggml-base.en.bin          (148 MB, auto-downloaded on first run)
 │   └── ggml-small.en.bin         (488 MB, optional)

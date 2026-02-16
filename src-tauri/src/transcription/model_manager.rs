@@ -80,7 +80,7 @@ const HF_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/
 
 pub fn models_dir() -> PathBuf {
     let data_dir = dirs::data_dir().expect("Could not determine data directory");
-    data_dir.join("com.dictate.app").join("models")
+    data_dir.join("com.wren.app").join("models")
 }
 
 fn find_model(model_name: &str) -> Option<&'static ModelInfo> {

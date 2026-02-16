@@ -19,7 +19,7 @@ pub struct TranscriptionHistory {
 
 fn history_path() -> PathBuf {
     let data_dir = dirs::data_dir().expect("Failed to get data directory");
-    data_dir.join("com.dictate.app").join("history.json")
+    data_dir.join("com.wren.app").join("history.json")
 }
 
 pub fn load_history() -> TranscriptionHistory {
