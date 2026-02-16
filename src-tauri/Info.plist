@@ -4,6 +4,6 @@
 <plist version="1.0">
 <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Dictate needs microphone access to record your voice for transcription.</string>
+    <string>Wren needs microphone access to record your voice for transcription.</string>
 </dict>
 </plist>

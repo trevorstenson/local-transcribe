@@ -1,12 +1,12 @@
 [package]
-name = "dictate"
+name = "wren"
 version = "1.0.1"
-description = "Dictate - Free local voice-to-text dictation app"
+description = "Wren - Free local voice-to-text dictation app"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "dictate_lib"
+name = "wren_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

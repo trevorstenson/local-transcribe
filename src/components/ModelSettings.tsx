@@ -141,7 +141,7 @@ export function ModelSettings() {
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white p-6">
-      <h1 className="text-lg font-semibold mb-1">Dictate Settings</h1>
+      <h1 className="text-lg font-semibold mb-1">Wren Settings</h1>
       <p className="text-sm text-white/50 mb-4">
         Choose your language and transcription model
       </p>
@@ -203,8 +203,8 @@ export function ModelSettings() {
             <span className="text-sm font-medium">Launch at Login</span>
             <span className="text-xs text-white/40">
               {autostart
-                ? "Dictate starts automatically when you log in"
-                : "Dictate must be started manually"}
+                ? "Wren starts automatically when you log in"
+                : "Wren must be started manually"}
             </span>
           </div>
           <div

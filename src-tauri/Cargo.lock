@@ -795,33 +795,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dictate"
-version = "1.0.1"
-dependencies = [
- "anyhow",
- "arboard",
- "cocoa",
- "cpal",
- "dirs 6.0.0",
- "enigo",
- "env_logger",
- "futures-util",
- "log",
- "objc",
- "parking_lot",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-global-shortcut",
- "tokio",
- "whisper-rs",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6041,6 +6014,33 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "wren"
+version = "1.0.1"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "cocoa",
+ "cpal",
+ "dirs 6.0.0",
+ "enigo",
+ "env_logger",
+ "futures-util",
+ "log",
+ "objc",
+ "parking_lot",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-global-shortcut",
+ "tokio",
+ "whisper-rs",
 ]
 
 [[package]]

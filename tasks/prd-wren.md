@@ -1,8 +1,8 @@
-# PRD: Dictate — Local Voice-to-Text App
+# PRD: Wren — Local Voice-to-Text App
 
 ## Introduction
 
-Dictate is a free, local-first voice-to-text dictation app for macOS. Users press a global hotkey, speak, and have their transcribed text auto-pasted into whatever app is focused. It replaces paid alternatives like SuperWhisper ($8/mo) by running OpenAI's Whisper model entirely on-device via whisper.cpp with Metal GPU acceleration. Built with Tauri v2 (Rust backend + React frontend), the app uses ~10-30MB memory vs Electron's 100-200MB.
+Wren is a free, local-first voice-to-text dictation app for macOS. Users press a global hotkey, speak, and have their transcribed text auto-pasted into whatever app is focused. It replaces paid alternatives like SuperWhisper ($8/mo) by running OpenAI's Whisper model entirely on-device via whisper.cpp with Metal GPU acceleration. Built with Tauri v2 (Rust backend + React frontend), the app uses ~10-30MB memory vs Electron's 100-200MB.
 
 ## Goals
 
@@ -44,7 +44,7 @@ Dictate is a free, local-first voice-to-text dictation app for macOS. Users pres
 
 **Acceptance Criteria:**
 - [ ] Model catalog defines 5 models: tiny.en, base.en, small.en, medium.en, base.en-q8_0 with metadata (size, description)
-- [ ] Models stored in `~/Library/Application Support/com.dictate.app/models/`
+- [ ] Models stored in `~/Library/Application Support/com.wren.app/models/`
 - [ ] `download_model()` streams from HuggingFace with progress callback
 - [ ] `model_exists()` checks if model file is already cached
 - [ ] `model_path()` returns path to cached model file
@@ -135,7 +135,7 @@ Dictate is a free, local-first voice-to-text dictation app for macOS. Users pres
 
 **Acceptance Criteria:**
 - [ ] Default hotkey is Option+Space
-- [ ] Hotkey preference stored in `~/Library/Application Support/com.dictate.app/config.json`
+- [ ] Hotkey preference stored in `~/Library/Application Support/com.wren.app/config.json`
 - [ ] Tauri command `set_hotkey` accepts new key combination, unregisters old, registers new
 - [ ] Tauri command `get_hotkey` returns current hotkey string
 - [ ] Frontend settings UI (simple modal or panel) shows current hotkey and allows changing it
