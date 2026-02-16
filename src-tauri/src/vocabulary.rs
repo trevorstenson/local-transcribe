@@ -23,9 +23,7 @@ pub struct Vocabulary {
 
 fn vocabulary_path() -> PathBuf {
     let data_dir = dirs::data_dir().expect("Failed to get data directory");
-    data_dir
-        .join("com.wren.app")
-        .join("vocabulary.json")
+    data_dir.join("com.wren.app").join("vocabulary.json")
 }
 
 pub fn load_vocabulary() -> Vocabulary {
@@ -85,7 +83,11 @@ pub struct CorrectionResult {
 }
 
 fn apply_case(matched: &str, replacement: &str) -> String {
-    if matched.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) && matched.chars().any(|c| c.is_alphabetic()) {
+    if matched
+        .chars()
+        .all(|c| !c.is_alphabetic() || c.is_uppercase())
+        && matched.chars().any(|c| c.is_alphabetic())
+    {
         replacement.to_uppercase()
     } else if matched.chars().next().map_or(false, |c| c.is_uppercase()) {
         let mut chars = replacement.chars();
