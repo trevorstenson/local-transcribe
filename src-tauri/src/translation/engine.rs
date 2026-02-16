@@ -31,7 +31,7 @@ impl TranslationService {
     fn load_model(&mut self, path: Option<String>) -> Result<(), String> {
         let path = path.ok_or_else(|| "Missing translation model path".to_string())?;
         let mut config = Config::default();
-        config.compute_type = ComputeType::INT8;
+        config.compute_type = ComputeType::AUTO;
         config.num_threads_per_replica = std::thread::available_parallelism()
             .map(|n| n.get().min(8))
             .unwrap_or(4);
